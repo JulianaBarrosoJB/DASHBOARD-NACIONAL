@@ -135,11 +135,17 @@ st.markdown(f"""
   /* cards construídos com st.container(key=...) — evita <div> aberta/fechada
      em chamadas st.markdown separadas (cada chamada gera um nó isolado no DOM,
      o que deixava uma caixa branca vazia acima do conteúdo real) */
-  .st-key-hero_prod, .st-key-hero_lines, .st-key-hero_downtime,
+  .st-key-hero_a, .st-key-hero_b, .st-key-hero_c,
   .st-key-gauge_oee, .st-key-gauge_avail, .st-key-gauge_perf, .st-key-gauge_qual {{
       background:{PANEL}; border:1px solid {BORDER}; border-radius:14px;
       padding:16px 20px 20px; box-shadow:0 1px 2px rgba(16,24,40,.04), 0 4px 10px rgba(16,24,40,.05);
   }}
+
+  .delta-badge {{ display:inline-flex; align-items:center; gap:3px; font-weight:700; font-size:13px; padding:2px 9px; border-radius:999px; }}
+  .delta-badge .mi {{ font-size:15px; }}
+  .mini-stat-row {{ display:flex; justify-content:space-between; align-items:center; font-size:13px; padding:6px 0; border-bottom:1px dashed {BORDER}; }}
+  .mini-stat-row:last-child {{ border-bottom:none; }}
+  .big-line-name {{ font-size:15px; font-weight:600; color:{TEXT}; margin-top:2px; }}
 
   /* menu principal — card buttons no topo (substitui as abas padrão) */
   .st-key-nav_row div[data-testid="stHorizontalBlock"] {{ gap: 10px; }}
@@ -262,6 +268,56 @@ def stat_card(mi_icon: str, label: str, value: str, accent: str = BLUE) -> str:
     """
 
 
+def delta_badge(pct: float) -> str:
+    up = pct >= 0
+    color = GREEN if up else RED
+    bg = GREEN_SOFT if up else RED_SOFT
+    mi = "arrow_upward" if up else "arrow_downward"
+    return (
+        f'<span class="delta-badge" style="background:{bg};color:{color};">'
+        f'{icon(mi, 15)} {abs(pct):.1f}%</span>'
+    )
+
+
+def ranking_rows(df: pd.DataFrame, name_col: str, value_col: str, fmt=lambda v: f"{v:.0f}%",
+                  good: float = 95, warn: float = 75) -> str:
+    """Lista de barras horizontais coloridas (verde/âmbar/vermelho) — usada
+    nos heróis para comparar linhas entre si."""
+    if df.empty:
+        return f'<div style="color:{MUTED};font-size:13px;">Sem dados suficientes.</div>'
+    maxv = df[value_col].max() or 1
+    rows = []
+    for _, row in df.iterrows():
+        v = row[value_col]
+        pct_width = max(2, min(100, 100 * v / maxv))
+        color = GREEN if v >= good else (AMBER if v >= warn else RED)
+        rows.append(
+            f"""<div class="rank-row">
+              <div class="rank-name">{row[name_col]}</div>
+              <div class="rank-track"><div class="rank-fill" style="width:{pct_width:.0f}%;background:{color};"></div></div>
+              <div class="rank-pct" style="color:{color};">{fmt(v)}</div>
+            </div>"""
+        )
+    return "".join(rows)
+
+
+def time_ago(ts_str: str) -> str:
+    try:
+        ts = pd.to_datetime(ts_str)
+    except Exception:
+        return "—"
+    delta = datetime.now() - ts.to_pydatetime()
+    mins = int(delta.total_seconds() // 60)
+    if mins < 1:
+        return "agora mesmo"
+    if mins < 60:
+        return f"há {mins} min"
+    hours = mins // 60
+    if hours < 24:
+        return f"há {hours}h"
+    return f"há {hours // 24}d"
+
+
 # ---------------------------------------------------------------------
 # Banco de dados
 # ---------------------------------------------------------------------
@@ -346,86 +402,253 @@ with st.container(key="nav_row"):
 st.markdown(f"<hr style='border:none;border-top:1px solid {BORDER};margin:14px 0 18px;'>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------
-# Dados
+# Dados gerais (usados em mais de uma aba)
 # ---------------------------------------------------------------------
 lines_df = db.df_lines()
 kpis = db.kpis_today()
-period = db.kpis_period()
-target_progress = db.df_line_target_progress()
-downtime_top = db.df_downtime_top(days=7, n=4)
 
 # ---------------------------------------------------------------------
-# Linha de destaque (hero) — estilo cards Power BI
+# Linha de destaque (hero) — 3 cards que MUDAM conforme a aba ativa
 # ---------------------------------------------------------------------
 hc1, hc2, hc3 = st.columns((1.15, 1.3, 1.1))
+_active = st.session_state.active_tab
 
-with hc1, st.container(key="hero_prod"):
-    top_a, top_b = st.columns((1.6, 1))
-    with top_a:
-        st.markdown(
-            f'<div class="card-title">{icon("payments")} Produção</div>'
-            '<div class="card-sub">Botijões contabilizados</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            f"""
-            <div class="hero-num-lbl">Hoje</div>
-            <div class="hero-num-val big">{period['hoje']:,}</div>
-            <div style="height:8px;"></div>
-            <div class="hero-num-lbl">Semana</div>
-            <div class="hero-num-val">{period['semana']:,}</div>
-            <div style="height:6px;"></div>
-            <div class="hero-num-lbl">Mês</div>
-            <div class="hero-num-val">{period['mes']:,}</div>
-            """.replace(",", "."),
-            unsafe_allow_html=True,
-        )
-    with top_b:
-        st.markdown(
-            meta_badge_svg(period["meta_pct"])
-            + f'<div style="font-size:11.5px;color:{MUTED};text-align:center;margin-top:4px;">Meta do dia</div>',
-            unsafe_allow_html=True,
-        )
+if _active == "overview":
+    period = db.kpis_period()
+    target_progress = db.df_line_target_progress()
+    downtime_top = db.df_downtime_top(days=7, n=4)
 
-with hc2, st.container(key="hero_lines"):
-    st.markdown(
-        f'<div class="card-title">{icon("flag")} Linhas por meta</div>'
-        '<div class="card-sub">% da velocidade-alvo atingida hoje</div>',
-        unsafe_allow_html=True,
-    )
-    if target_progress.empty or target_progress["avg_speed"].sum() == 0:
-        st.markdown(f'<div style="color:{MUTED};font-size:13px;">Sem leituras suficientes ainda hoje.</div>', unsafe_allow_html=True)
-    else:
-        for _, row in target_progress.iterrows():
-            pct = max(0, min(130, row["pct"]))
-            color = GREEN if pct >= 95 else (AMBER if pct >= 75 else RED)
+    with hc1, st.container(key="hero_a"):
+        top_a, top_b = st.columns((1.6, 1))
+        with top_a:
             st.markdown(
-                f"""<div class="rank-row">
-                  <div class="rank-name">{row['name']}</div>
-                  <div class="rank-track"><div class="rank-fill" style="width:{min(pct,100)}%;background:{color};"></div></div>
-                  <div class="rank-pct" style="color:{color};">{int(row['pct'])}%</div>
-                </div>""",
+                f'<div class="card-title">{icon("payments")} Produção</div>'
+                '<div class="card-sub">Botijões contabilizados</div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                f"""
+                <div class="hero-num-lbl">Hoje</div>
+                <div class="hero-num-val big">{period['hoje']:,}</div>
+                <div style="height:8px;"></div>
+                <div class="hero-num-lbl">Semana</div>
+                <div class="hero-num-val">{period['semana']:,}</div>
+                <div style="height:6px;"></div>
+                <div class="hero-num-lbl">Mês</div>
+                <div class="hero-num-val">{period['mes']:,}</div>
+                """.replace(",", "."),
+                unsafe_allow_html=True,
+            )
+        with top_b:
+            st.markdown(
+                meta_badge_svg(period["meta_pct"])
+                + f'<div style="font-size:11.5px;color:{MUTED};text-align:center;margin-top:4px;">Meta do dia</div>',
                 unsafe_allow_html=True,
             )
 
-with hc3, st.container(key="hero_downtime"):
-    st.markdown(
-        f'<div class="card-title">{icon("report_problem")} Paradas — principais causas</div>'
-        '<div class="card-sub">Últimos 7 dias</div>',
-        unsafe_allow_html=True,
-    )
-    if downtime_top is None or downtime_top.empty:
-        st.markdown(f'<div style="color:{MUTED};font-size:13px;">Sem paradas registradas.</div>', unsafe_allow_html=True)
-    else:
-        maxv = downtime_top["duration_min"].max()
-        for _, row in downtime_top.iterrows():
-            width = 100 * row["duration_min"] / maxv if maxv else 0
+    with hc2, st.container(key="hero_b"):
+        st.markdown(
+            f'<div class="card-title">{icon("flag")} Linhas por meta</div>'
+            '<div class="card-sub">% da velocidade-alvo atingida hoje</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(ranking_rows(target_progress, "name", "pct", lambda v: f"{v:.0f}%"), unsafe_allow_html=True)
+
+    with hc3, st.container(key="hero_c"):
+        st.markdown(
+            f'<div class="card-title">{icon("report_problem")} Paradas — principais causas</div>'
+            '<div class="card-sub">Últimos 7 dias</div>',
+            unsafe_allow_html=True,
+        )
+        if downtime_top is None or downtime_top.empty:
+            st.markdown(f'<div style="color:{MUTED};font-size:13px;">Sem paradas registradas.</div>', unsafe_allow_html=True)
+        else:
+            maxv = downtime_top["duration_min"].max()
+            for _, row in downtime_top.iterrows():
+                width = 100 * row["duration_min"] / maxv if maxv else 0
+                st.markdown(
+                    f"""<div class="top-row">
+                      <div style="width:150px;">{row['category']}</div>
+                      <div class="top-bar"><div class="top-bar-fill" style="width:{width:.0f}%;"></div></div>
+                      <div style="font-weight:700;color:{TEXT};">{row['duration_min']:.0f} min</div>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+
+elif _active == "prod":
+    cmp = db.production_period_comparison(days=7)
+    units_rank = db.df_line_units_ranking(days=7)
+    oee_rank = db.df_line_oee_ranking(days=7)
+
+    with hc1, st.container(key="hero_a"):
+        st.markdown(
+            f'<div class="card-title">{icon("compare_arrows")} 7 dias vs. 7 dias anteriores</div>'
+            '<div class="card-sub">Comparativo de produção</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f'<div class="hero-num-val big">{cmp["current"]:,}</div>'.replace(",", "."),
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            delta_badge(cmp["delta_pct"])
+            + f'<span style="font-size:12px;color:{MUTED};margin-left:8px;">'
+              f'vs. {cmp["previous"]:,} no período anterior</span>'.replace(",", "."),
+            unsafe_allow_html=True,
+        )
+
+    with hc2, st.container(key="hero_b"):
+        st.markdown(
+            f'<div class="card-title">{icon("leaderboard")} Top linhas — 7 dias</div>'
+            '<div class="card-sub">Total produzido no período</div>',
+            unsafe_allow_html=True,
+        )
+        fmt_units = lambda v: f"{int(v):,}".replace(",", ".")
+        st.markdown(ranking_rows(units_rank, "name", "units", fmt_units, good=1e12, warn=0), unsafe_allow_html=True)
+
+    with hc3, st.container(key="hero_c"):
+        st.markdown(
+            f'<div class="card-title">{icon("insights")} OEE por linha — 7 dias</div>'
+            '<div class="card-sub">Média do período · meta 85%</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(ranking_rows(oee_rank, "name", "oee_pct", lambda v: f"{v:.0f}%", good=85, warn=70), unsafe_allow_html=True)
+
+elif _active == "lines":
+    fastest = db.fastest_line_now()
+    uptime = db.df_line_uptime_today()
+    activity = db.last_activity()
+
+    with hc1, st.container(key="hero_a"):
+        st.markdown(
+            f'<div class="card-title">{icon("bolt")} Linha mais rápida agora</div>'
+            '<div class="card-sub">Maior velocidade em produção</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(f'<div class="hero-num-val big">{fastest["speed"]:.0f}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="big-line-name">{fastest["name"]}</div><div style="color:{MUTED};font-size:12px;">un/min</div>', unsafe_allow_html=True)
+
+    with hc2, st.container(key="hero_b"):
+        st.markdown(
+            f'<div class="card-title">{icon("schedule")} Uptime hoje por linha</div>'
+            '<div class="card-sub">% do tempo em produção</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(ranking_rows(uptime, "name", "uptime_pct", lambda v: f"{v:.0f}%", good=95, warn=80), unsafe_allow_html=True)
+
+    with hc3, st.container(key="hero_c"):
+        st.markdown(
+            f'<div class="card-title">{icon("history")} Última atividade registrada</div>'
+            '<div class="card-sub">Leitura ou parada mais recente</div>',
+            unsafe_allow_html=True,
+        )
+        if not activity:
+            st.markdown(f'<div style="color:{MUTED};font-size:13px;">Sem eventos ainda.</div>', unsafe_allow_html=True)
+        else:
+            kind_label = "Leitura manual" if activity["kind"] == "leitura" else "Parada registrada"
+            val_label = f'{activity["val"]} un/min' if activity["kind"] == "leitura" else activity["val"]
             st.markdown(
-                f"""<div class="top-row">
-                  <div style="width:150px;">{row['category']}</div>
-                  <div class="top-bar"><div class="top-bar-fill" style="width:{width:.0f}%;"></div></div>
-                  <div style="font-weight:700;color:{TEXT};">{row['duration_min']:.0f} min</div>
-                </div>""",
+                f'<div class="big-line-name">{kind_label}</div>'
+                f'<div class="hero-num-val" style="font-size:19px;margin-top:4px;">{activity["name"]}</div>'
+                f'<div style="color:{MUTED};font-size:12px;margin-top:4px;">{val_label} · {time_ago(activity["ts"])}</div>',
+                unsafe_allow_html=True,
+            )
+
+elif _active == "conn":
+    conn_log = db.df_connectivity(limit=1)
+    link_down = not conn_log.empty and conn_log.iloc[0]["event"] == "queda"
+    cstats = db.connectivity_stats(days=30)
+
+    with hc1, st.container(key="hero_a"):
+        st.markdown(
+            f'<div class="card-title">{icon("cell_tower")} Status do link primário</div>'
+            '<div class="card-sub">Ethernet / fibra</div>',
+            unsafe_allow_html=True,
+        )
+        status_color = RED if link_down else GREEN
+        status_text = "QUEDA — em 4G" if link_down else "ATIVO"
+        st.markdown(
+            f'<div class="hero-num-val big" style="color:{status_color};display:flex;align-items:center;gap:8px;">'
+            f'{icon("wifi_off" if link_down else "wifi", 30, status_color)}{status_text}</div>'
+            f'<div style="color:{MUTED};font-size:12px;margin-top:6px;">Failover automático para 4G, sem intervenção manual.</div>',
+            unsafe_allow_html=True,
+        )
+
+    with hc2, st.container(key="hero_b"):
+        st.markdown(
+            f'<div class="card-title">{icon("report")} Quedas registradas</div>'
+            '<div class="card-sub">Últimos 30 dias</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(f'<div class="hero-num-val big">{cstats["quedas"]}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="color:{MUTED};font-size:12px;margin-top:6px;">{cstats["total_eventos"]} eventos de conectividade no total</div>', unsafe_allow_html=True)
+
+    with hc3, st.container(key="hero_c"):
+        st.markdown(
+            f'<div class="card-title">{icon("history_toggle_off")} Última queda</div>'
+            '<div class="card-sub">Registro mais recente</div>',
+            unsafe_allow_html=True,
+        )
+        if cstats["last_queda"]:
+            st.markdown(
+                f'<div class="hero-num-val" style="font-size:20px;">{time_ago(cstats["last_queda"])}</div>'
+                f'<div style="color:{MUTED};font-size:12px;margin-top:6px;">{pd.to_datetime(cstats["last_queda"]).strftime("%d/%m/%Y %H:%M")}</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(f'<div style="color:{GREEN};font-size:15px;font-weight:700;">{icon("check_circle",18,GREEN)} Nenhuma queda registrada</div>', unsafe_allow_html=True)
+
+else:  # reports
+    totals = db.db_totals()
+    dt30 = db.df_downtime(days=30)
+
+    with hc1, st.container(key="hero_a"):
+        st.markdown(
+            f'<div class="card-title">{icon("storage")} Registros no banco</div>'
+            '<div class="card-sub">Total de linhas por tabela</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            "".join(
+                f'<div class="mini-stat-row"><span>{label}</span><b>{totals[key]:,}</b></div>'.replace(",", ".")
+                for key, label in [
+                    ("readings", "Leituras"), ("daily_production", "Produção diária"),
+                    ("downtime_events", "Paradas"), ("connectivity_log", "Conectividade"),
+                ]
+            ),
+            unsafe_allow_html=True,
+        )
+
+    with hc2, st.container(key="hero_b"):
+        st.markdown(
+            f'<div class="card-title">{icon("date_range")} Período coberto</div>'
+            '<div class="card-sub">Histórico disponível no banco</div>',
+            unsafe_allow_html=True,
+        )
+        if totals["span_start"]:
+            start_fmt = pd.to_datetime(totals["span_start"]).strftime("%d/%m/%Y")
+            end_fmt = pd.to_datetime(totals["span_end"]).strftime("%d/%m/%Y")
+            ndays = (pd.to_datetime(totals["span_end"]) - pd.to_datetime(totals["span_start"])).days + 1
+            st.markdown(
+                f'<div class="hero-num-val" style="font-size:20px;">{start_fmt} — {end_fmt}</div>'
+                f'<div style="color:{MUTED};font-size:12px;margin-top:6px;">{ndays} dias de histórico</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(f'<div style="color:{MUTED};font-size:13px;">Sem histórico ainda.</div>', unsafe_allow_html=True)
+
+    with hc3, st.container(key="hero_c"):
+        st.markdown(
+            f'<div class="card-title">{icon("report_problem")} Paradas — 30 dias</div>'
+            '<div class="card-sub">Resumo para o relatório</div>',
+            unsafe_allow_html=True,
+        )
+        if dt30.empty:
+            st.markdown(f'<div style="color:{MUTED};font-size:13px;">Sem paradas registradas.</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(
+                f'<div class="hero-num-val big">{dt30["duration_min"].sum():.0f}<span style="font-size:16px;color:{MUTED};"> min</span></div>'
+                f'<div style="color:{MUTED};font-size:12px;margin-top:6px;">{len(dt30)} eventos registrados</div>',
                 unsafe_allow_html=True,
             )
 

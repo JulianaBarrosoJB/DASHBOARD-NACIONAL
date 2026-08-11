@@ -439,3 +439,123 @@ def kpis_today() -> dict:
         "linhas_total": len(lines),
         "velocidade_total": round(velocidade_total, 1),
     }
+
+
+# ---------------------------------------------------------------------
+# Extras — dão conteúdo diferente ao "hero" de cada aba do menu
+# ---------------------------------------------------------------------
+
+def production_period_comparison(days: int = 7) -> dict:
+    """Total do período atual (N dias) vs. o período imediatamente anterior."""
+    cur = df_daily_production(days=days)
+    prev_all = df_daily_production(days=days * 2)
+    cutoff = pd.Timestamp(date.today() - timedelta(days=days))
+    prev = prev_all[prev_all["prod_date"] < cutoff] if not prev_all.empty else prev_all
+
+    cur_total = int(cur["units"].sum()) if not cur.empty else 0
+    prev_total = int(prev["units"].sum()) if not prev.empty else 0
+    delta_pct = round(100 * (cur_total - prev_total) / prev_total, 1) if prev_total else 0.0
+    return {"current": cur_total, "previous": prev_total, "delta_pct": delta_pct, "days": days}
+
+
+def df_line_units_ranking(days: int = 7) -> pd.DataFrame:
+    """Ranking de linhas por total produzido no período — para o hero da aba Produção."""
+    daily = df_daily_production(days=days)
+    if daily.empty:
+        return daily
+    agg = daily.groupby("name", as_index=False)["units"].sum().sort_values("units", ascending=False)
+    maxv = agg["units"].max()
+    agg["pct"] = (100 * agg["units"] / maxv).round(0) if maxv else 0
+    return agg
+
+
+def df_line_oee_ranking(days: int = 7) -> pd.DataFrame:
+    daily = df_daily_production(days=days)
+    if daily.empty:
+        return daily
+    return daily.groupby("name", as_index=False)["oee_pct"].mean().sort_values("oee_pct", ascending=False)
+
+
+def df_line_uptime_today() -> pd.DataFrame:
+    """% do tempo hoje que cada linha ficou em produção (status 'on')."""
+    readings = df_readings_today()
+    lines = df_lines()
+    if readings.empty:
+        out = lines.copy()
+        out["uptime_pct"] = 0.0
+        return out[["id", "name", "uptime_pct"]]
+    today_r = readings[readings["ts"].dt.date == date.today()]
+    if today_r.empty:
+        out = lines.copy()
+        out["uptime_pct"] = 0.0
+        return out[["id", "name", "uptime_pct"]]
+    grp = today_r.groupby("line_id")["status"].apply(lambda s: 100 * (s == "on").mean())
+    out = lines.copy()
+    out["uptime_pct"] = out["id"].map(grp).fillna(0).round(0)
+    return out.sort_values("uptime_pct", ascending=False)[["id", "name", "uptime_pct"]]
+
+
+def fastest_line_now() -> dict:
+    """Linha com maior velocidade na leitura mais recente de hoje."""
+    readings = df_readings_today()
+    if readings.empty:
+        return {"name": "—", "speed": 0.0}
+    latest = readings.sort_values("ts").groupby("line_id").tail(1)
+    on = latest[latest["status"] == "on"]
+    if on.empty:
+        return {"name": "—", "speed": 0.0}
+    top = on.sort_values("speed", ascending=False).iloc[0]
+    return {"name": top["name"], "speed": float(top["speed"])}
+
+
+def last_activity() -> dict:
+    """Último evento registrado no banco (leitura manual ou parada) — o mais recente entre os dois."""
+    conn = get_conn()
+    r1 = conn.execute(
+        "SELECT r.ts AS ts, l.name AS name, 'leitura' AS kind, CAST(r.speed AS TEXT) AS val "
+        "FROM readings r JOIN lines l ON l.id = r.line_id ORDER BY r.ts DESC LIMIT 1"
+    ).fetchone()
+    r2 = conn.execute(
+        "SELECT e.ts AS ts, l.name AS name, 'parada' AS kind, e.category AS val "
+        "FROM downtime_events e JOIN lines l ON l.id = e.line_id ORDER BY e.ts DESC LIMIT 1"
+    ).fetchone()
+    conn.close()
+    candidates = [dict(r) for r in (r1, r2) if r is not None]
+    if not candidates:
+        return {}
+    candidates.sort(key=lambda d: d["ts"], reverse=True)
+    return candidates[0]
+
+
+def connectivity_stats(days: int = 30) -> dict:
+    conn = get_conn()
+    start = (datetime.now() - timedelta(days=days)).isoformat(timespec="seconds")
+    quedas = conn.execute(
+        "SELECT COUNT(*) AS n FROM connectivity_log WHERE event='queda' AND ts >= ?", (start,)
+    ).fetchone()["n"]
+    last_queda = conn.execute(
+        "SELECT ts FROM connectivity_log WHERE event='queda' ORDER BY ts DESC LIMIT 1"
+    ).fetchone()
+    total_eventos = conn.execute(
+        "SELECT COUNT(*) AS n FROM connectivity_log WHERE ts >= ?", (start,)
+    ).fetchone()["n"]
+    conn.close()
+    return {
+        "quedas": quedas,
+        "last_queda": last_queda["ts"] if last_queda else None,
+        "total_eventos": total_eventos,
+        "days": days,
+    }
+
+
+def db_totals() -> dict:
+    """Contagens gerais do banco — para o hero da aba Relatórios."""
+    conn = get_conn()
+    out = {}
+    for t in ("readings", "daily_production", "downtime_events", "connectivity_log"):
+        out[t] = conn.execute(f"SELECT COUNT(*) AS n FROM {t}").fetchone()["n"]
+    span = conn.execute("SELECT MIN(prod_date) AS a, MAX(prod_date) AS b FROM daily_production").fetchone()
+    conn.close()
+    out["span_start"] = span["a"]
+    out["span_end"] = span["b"]
+    return out
