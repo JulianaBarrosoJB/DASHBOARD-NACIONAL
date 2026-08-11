@@ -51,6 +51,31 @@ do dia), então já dá pra apresentar sem nenhum passo manual extra.
   `downtime_events`, `connectivity_log`. Toda a lógica de acesso está isolada em
   [`db.py`](db.py).
 
+## Publicar online (link para abrir no celular)
+
+O jeito mais simples e gratuito, feito sob medida pra apps Streamlit:
+
+1. **Suba o projeto pro GitHub** (o repositório git local já está preparado, na raiz
+   de `DASHBOARD NACIONAL`):
+   ```bash
+   git remote add origin https://github.com/SEU-USUARIO/prodview-endtech.git
+   git branch -M main
+   git push -u origin main
+   ```
+   (crie o repositório vazio antes em github.com/new — pode ser privado).
+2. Entre em **[share.streamlit.io](https://share.streamlit.io)**, faça login com o
+   GitHub e clique em **"New app"**.
+3. Selecione o repositório, branch `main`, e em **"Main file path"** informe
+   `prodview/app.py`.
+4. Clique em **Deploy**. Em 1–2 minutos você recebe um link público (algo como
+   `https://prodview-endtech.streamlit.app`) que abre normalmente no celular, em
+   qualquer rede.
+
+> **Atenção**: como o banco é o SQLite local de demonstração, ele é recriado do zero
+> a cada novo deploy/hibernação do app gratuito (fica sem acesso após um tempo
+> ocioso e "acorda" no próximo acesso, ~30s). Ótimo pra demonstrar; quando ligar na
+> base de dados real (seção abaixo), os dados passam a ser persistentes de verdade.
+
 ## Conectando a base de dados real depois
 
 Tudo que fala com o banco passa por `db.py`. Para apontar para a base definitiva
