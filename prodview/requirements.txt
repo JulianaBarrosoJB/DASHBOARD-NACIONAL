@@ -2,3 +2,5 @@ streamlit>=1.38,<2
 pandas>=2.2
 plotly>=5.22
 reportlab>=4.0
+matplotlib>=3.8
+Pillow>=10.0

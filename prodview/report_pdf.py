@@ -20,7 +20,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.platypus import (
-    SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, HRFlowable, Image,
+    SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, HRFlowable, Image, KeepTogether,
 )
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_RIGHT, TA_CENTER
@@ -229,9 +229,8 @@ def build_pdf(report_df, kpis: dict, start_date, end_date, downtime_df=None) -> 
     has_data = report_df is not None and not report_df.empty
 
     # --- gráfico + tabela: produção por linha -----------------------------
-    story.append(Paragraph("Produção por linha", h2))
     if has_data:
-        story.append(_chart_units_by_line(report_df))
+        story.append(KeepTogether([Paragraph("Produção por linha", h2), _chart_units_by_line(report_df)]))
         story.append(Spacer(1, 6))
         by_line = (
             report_df.groupby("Linha", as_index=False)
@@ -257,17 +256,19 @@ def build_pdf(report_df, kpis: dict, start_date, end_date, downtime_df=None) -> 
         ]))
         story.append(tt)
     else:
+        story.append(Paragraph("Produção por linha", h2))
         story.append(Paragraph("Sem dados para o período selecionado.", sub))
 
     # --- gráfico: tendência diária -----------------------------------------
     if has_data and report_df["Data"].nunique() > 1:
-        story.append(Paragraph("Tendência diária de produção", h2))
-        story.append(_chart_daily_trend(report_df))
+        story.append(KeepTogether([Paragraph("Tendência diária de produção", h2), _chart_daily_trend(report_df)]))
 
     # --- paradas: gráfico + tabela ------------------------------------------
     if downtime_df is not None and not downtime_df.empty:
-        story.append(Paragraph("Principais causas de parada no período", h2))
-        story.append(_chart_downtime_causes(downtime_df))
+        story.append(KeepTogether([
+            Paragraph("Principais causas de parada no período", h2),
+            _chart_downtime_causes(downtime_df),
+        ]))
         story.append(Spacer(1, 6))
         agg = downtime_df.groupby("category", as_index=False)["duration_min"].sum()
         agg = agg.sort_values("duration_min", ascending=False)
