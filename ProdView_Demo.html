@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ProdView — Prévia da Plataforma</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #0A0F1C;
+    --panel: #10192B;
+    --panel-2: #141F35;
+    --line: #22314D;
+    --teal: #1FBF9E;
+    --teal-dim: #12463C;
+    --amber: #F0A93E;
+    --red: #E8564B;
+    --text: #E7EDF6;
+    --muted: #7C8AA3;
+    --mono: 'JetBrains Mono', monospace;
+    --display: 'Space Grotesk', sans-serif;
+    --body: 'Inter', sans-serif;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{
+    background: radial-gradient(ellipse at top left, #0D1526 0%, var(--bg) 55%);
+    color: var(--text);
+    font-family: var(--body);
+    min-height: 100vh;
+    padding: 28px;
+  }
+  .wrap{ max-width: 1180px; margin: 0 auto; }
+
+  .badge-preview{
+    display:inline-flex; align-items:center; gap:8px;
+    background: rgba(240,169,62,0.1); border: 1px solid rgba(240,169,62,0.35);
+    color: var(--amber); font-size: 12px; font-weight: 600; letter-spacing: 0.04em;
+    padding: 6px 12px; border-radius: 999px; margin-bottom: 22px; text-transform: uppercase;
+  }
+  .badge-preview span.dot{ width:6px; height:6px; border-radius:50%; background:var(--amber); }
+
+  header{
+    display:flex; justify-content: space-between; align-items: flex-start;
+    margin-bottom: 32px; flex-wrap: wrap; gap: 16px;
+  }
+  .brand{ display:flex; align-items:center; gap: 12px; }
+  .brand-mark{
+    width: 40px; height: 40px; border-radius: 10px;
+    background: linear-gradient(135deg, var(--teal), #0d7d68);
+    display:flex; align-items:center; justify-content:center;
+    font-family: var(--display); font-weight:700; font-size: 18px; color: #06231d;
+  }
+  .brand h1{ font-family: var(--display); font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+  .brand p{ font-size: 13px; color: var(--muted); margin-top: 2px; }
+
+  .status-pill{
+    display:flex; align-items:center; gap:10px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 10px 16px; font-size: 13px; color: var(--muted);
+  }
+  .status-pill b{ color: var(--text); font-weight:600; }
+  #clock{ font-family: var(--mono); color: var(--teal); font-size: 13px; }
+
+  .hero{
+    background: linear-gradient(135deg, var(--panel) 0%, var(--panel-2) 100%);
+    border: 1px solid var(--line); border-radius: 20px;
+    padding: 32px; margin-bottom: 22px;
+    display:flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 24px;
+  }
+  .hero-label{ font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
+  #counter{
+    font-family: var(--mono); font-weight: 700; font-size: 64px; color: var(--text);
+    letter-spacing: -0.01em; line-height: 1;
+  }
+  .hero-sub{ font-size: 13px; color: var(--teal); margin-top: 10px; display:flex; align-items:center; gap:6px; }
+  .pulse{ width:7px; height:7px; border-radius:50%; background: var(--teal); animation: pulse 1.6s infinite; }
+  @keyframes pulse{ 0%{opacity:1} 50%{opacity:.3} 100%{opacity:1} }
+
+  .hero-stats{ display:flex; gap: 28px; }
+  .stat{ text-align: right; }
+  .stat .n{ font-family: var(--mono); font-size: 26px; font-weight: 600; }
+  .stat .l{ font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+  .grid{ display:grid; grid-template-columns: repeat(auto-fit, minmax(230px,1fr)); gap: 14px; margin-bottom: 22px; }
+  .card{
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px;
+  }
+  .card-head{ display:flex; justify-content: space-between; align-items:center; margin-bottom: 14px; }
+  .card-head .name{ font-weight: 600; font-size: 14px; }
+  .dot{ width:8px; height:8px; border-radius:50%; }
+  .dot.on{ background: var(--teal); box-shadow: 0 0 8px var(--teal); }
+  .dot.off{ background: var(--red); box-shadow: 0 0 8px var(--red); }
+  .card .val{ font-family: var(--mono); font-size: 28px; font-weight: 600; margin-bottom: 4px; }
+  .card .lbl{ font-size: 12px; color: var(--muted); }
+  .bars{ display:flex; gap:3px; align-items:flex-end; height: 32px; margin-top: 14px; }
+  .bars i{ flex:1; background: var(--teal-dim); border-radius: 2px; transition: height .4s ease; }
+
+  .panel-title{ font-family: var(--display); font-size: 17px; font-weight: 600; margin-bottom: 4px; }
+  .panel-sub{ font-size: 13px; color: var(--muted); margin-bottom: 20px; }
+
+  .conn{
+    background: var(--panel); border: 1px solid var(--line); border-radius: 20px; padding: 28px; margin-bottom: 22px;
+  }
+  .conn-flow{
+    display:flex; align-items:center; gap: 14px; flex-wrap: wrap; margin: 22px 0;
+  }
+  .node{
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px 16px; min-width: 150px; text-align:center;
+  }
+  .node .t{ font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .node .v{ font-weight: 600; font-size: 14px; display:flex; align-items:center; justify-content:center; gap:8px; }
+  .arrow{ color: var(--muted); font-size: 20px; }
+  .links{ display:flex; flex-direction:column; gap:8px; }
+  .link-row{
+    display:flex; align-items:center; gap:10px; font-size: 13px;
+    background: var(--panel-2); border:1px solid var(--line); border-radius: 10px; padding: 10px 14px;
+  }
+  .link-row .ld{ width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+  .link-row .lname{ flex:1; font-weight:500; }
+  .link-row .lstate{ font-family: var(--mono); font-size:12px; color: var(--muted); }
+
+  button#failbtn{
+    background: var(--teal); color: #06231d; border:none; border-radius: 10px;
+    padding: 12px 20px; font-family: var(--body); font-weight: 600; font-size: 13px;
+    cursor: pointer; transition: transform .15s ease;
+  }
+  button#failbtn:hover{ transform: translateY(-1px); }
+  button#failbtn:active{ transform: translateY(0); }
+  button#failbtn:disabled{ opacity:.5; cursor: default; transform:none; }
+
+  #log{
+    margin-top: 18px; background: #060B15; border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px; font-family: var(--mono); font-size: 12px; color: var(--muted);
+    height: 110px; overflow-y: auto; display:flex; flex-direction:column-reverse;
+  }
+  #log div{ padding: 2px 0; }
+  #log .ok{ color: var(--teal); }
+  #log .warn{ color: var(--amber); }
+
+  footer{ text-align:center; font-size: 12px; color: var(--muted); padding: 24px 0 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="badge-preview"><span class="dot"></span>Prévia da plataforma · dados simulados para demonstração</div>
+
+  <header>
+    <div class="brand">
+      <div class="brand-mark">PV</div>
+      <div>
+        <h1>ProdView</h1>
+        <p>Monitoramento de produção · Nacional Gás</p>
+      </div>
+    </div>
+    <div class="status-pill">
+      <span>Turno atual: 1º turno</span>
+      <span style="opacity:.4">|</span>
+      <span id="clock">--:--:--</span>
+    </div>
+  </header>
+
+  <div class="hero">
+    <div>
+      <div class="hero-label">Botijões contabilizados hoje</div>
+      <div id="counter">0</div>
+      <div class="hero-sub"><span class="pulse"></span>Atualizando em tempo real</div>
+    </div>
+    <div class="hero-stats">
+      <div class="stat"><div class="n" id="eff">96%</div><div class="l">Eficiência (OEE)</div></div>
+      <div class="stat"><div class="n" id="lines-on">4/4</div><div class="l">Linhas ativas</div></div>
+    </div>
+  </div>
+
+  <div class="grid" id="lines"></div>
+
+  <div class="conn">
+    <div class="panel-title">Conectividade e redundância</div>
+    <div class="panel-sub">Link primário via Ethernet/fibra da planta, com contingência automática por 4G homologado — sem intervenção manual em caso de queda.</div>
+
+    <div class="conn-flow">
+      <div class="node"><div class="t">Campo</div><div class="v"><span class="dot on"></span>Sensores</div></div>
+      <div class="arrow">→</div>
+      <div class="node"><div class="t">Painel</div><div class="v"><span class="dot on"></span>Gateway local</div></div>
+      <div class="arrow">→</div>
+      <div class="node"><div class="t">Saída</div><div class="v"><span class="dot on"></span>Roteador WAN</div></div>
+      <div class="arrow">→</div>
+      <div class="node"><div class="t">Destino</div><div class="v"><span class="dot on"></span>Servidor / VPN</div></div>
+    </div>
+
+    <div class="links">
+      <div class="link-row"><span class="ld" id="ld-eth" style="background:var(--teal); box-shadow:0 0 6px var(--teal)"></span><span class="lname">Ethernet / fibra (primário)</span><span class="lstate" id="ls-eth">ativo</span></div>
+      <div class="link-row"><span class="ld" id="ld-4g" style="background:var(--muted)"></span><span class="lname">4G homologado (contingência)</span><span class="lstate" id="ls-4g">standby</span></div>
+    </div>
+
+    <button id="failbtn" onclick="simulateFailover()">Simular queda do link principal</button>
+    <div id="log"></div>
+  </div>
+
+  <footer>SLINN — Solutions Line Innovation · Sistema DCM / ProdView</footer>
+</div>
+
+<script>
+  // Clock
+  function tick(){
+    document.getElementById('clock').textContent = new Date().toLocaleTimeString('pt-BR');
+  }
+  setInterval(tick, 1000); tick();
+
+  // Lines data
+  const linesData = [
+    { name: 'Linha 01 · P13', speed: 18, status: 'on' },
+    { name: 'Linha 02 · P20', speed: 16, status: 'on' },
+    { name: 'Linha 03 · P45', speed: 12, status: 'on' },
+    { name: 'Linha 04 · P13', speed: 19, status: 'on' },
+  ];
+
+  const linesEl = document.getElementById('lines');
+  linesData.forEach((l, i) => {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `
+      <div class="card-head">
+        <span class="name">${l.name}</span>
+        <span class="dot on" id="dot-${i}"></span>
+      </div>
+      <div class="val" id="speed-${i}">${l.speed}</div>
+      <div class="lbl">botijões/min</div>
+      <div class="bars" id="bars-${i}"></div>
+    `;
+    linesEl.appendChild(card);
+    const bars = card.querySelector(`#bars-${i}`);
+    for (let b = 0; b < 16; b++) {
+      const bar = document.createElement('i');
+      bar.style.height = (8 + Math.random()*24) + 'px';
+      bars.appendChild(bar);
+    }
+  });
+
+  let total = 18540;
+  document.getElementById('counter').textContent = total.toLocaleString('pt-BR');
+
+  setInterval(() => {
+    total += Math.floor(Math.random()*4) + 1;
+    document.getElementById('counter').textContent = total.toLocaleString('pt-BR');
+
+    linesData.forEach((l, i) => {
+      const speedEl = document.getElementById(`speed-${i}`);
+      const newSpeed = Math.max(8, l.speed + Math.round((Math.random()-0.5)*4));
+      speedEl.textContent = newSpeed;
+      const bars = document.querySelectorAll(`#bars-${i} i`);
+      bars.forEach(bar => { bar.style.height = (8 + Math.random()*24) + 'px'; });
+    });
+  }, 1400);
+
+  // Failover simulation
+  function logMsg(text, cls){
+    const log = document.getElementById('log');
+    const div = document.createElement('div');
+    const time = new Date().toLocaleTimeString('pt-BR');
+    div.className = cls || '';
+    div.textContent = `[${time}] ${text}`;
+    log.appendChild(div);
+  }
+  logMsg('Sistema iniciado — link primário ativo.', 'ok');
+
+  function simulateFailover(){
+    const btn = document.getElementById('failbtn');
+    btn.disabled = true;
+
+    const ldEth = document.getElementById('ld-eth');
+    const lsEth = document.getElementById('ls-eth');
+    const ld4g = document.getElementById('ld-4g');
+    const ls4g = document.getElementById('ls-4g');
+
+    ldEth.style.background = 'var(--red)'; ldEth.style.boxShadow = '0 0 6px var(--red)';
+    lsEth.textContent = 'indisponível';
+    logMsg('Link Ethernet/fibra indisponível.', 'warn');
+
+    setTimeout(() => {
+      ld4g.style.background = 'var(--teal)'; ld4g.style.boxShadow = '0 0 6px var(--teal)';
+      ls4g.textContent = 'ativo (contingência)';
+      logMsg('Chaveamento automático para 4G concluído — coleta de dados não interrompida.', 'ok');
+    }, 1200);
+
+    setTimeout(() => {
+      ldEth.style.background = 'var(--teal)'; ldEth.style.boxShadow = '0 0 6px var(--teal)';
+      lsEth.textContent = 'ativo';
+      ld4g.style.background = 'var(--muted)'; ld4g.style.boxShadow = 'none';
+      ls4g.textContent = 'standby';
+      logMsg('Link Ethernet/fibra restabelecido — rota primária retomada.', 'ok');
+      btn.disabled = false;
+    }, 4200);
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# banco de dados de demonstração — é recriado automaticamente no primeiro acesso
+prodview/data/*.db
+
+# logs locais de teste
+prodview/streamlit.log
+prodview/test_report.pdf
+
+# segredos (se um dia existirem credenciais de banco real / Power BI)
+.streamlit/secrets.toml
+prodview/.streamlit/secrets.toml
+
+.DS_Store
+Thumbs.db
+
+# configuração local do Claude Code (não faz parte do produto)
+.claude/
