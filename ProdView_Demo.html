@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ProdView — Prévia da Plataforma</title>
+<title>ProdView - Prévia da Plataforma</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
@@ -179,7 +179,7 @@
 
   <div class="conn">
     <div class="panel-title">Conectividade e redundância</div>
-    <div class="panel-sub">Link primário via Ethernet/fibra da planta, com contingência automática por 4G homologado — sem intervenção manual em caso de queda.</div>
+    <div class="panel-sub">Link primário via Ethernet/fibra da planta, com contingência automática por 4G homologado - sem intervenção manual em caso de queda.</div>
 
     <div class="conn-flow">
       <div class="node"><div class="t">Campo</div><div class="v"><span class="dot on"></span>Sensores</div></div>
@@ -200,7 +200,7 @@
     <div id="log"></div>
   </div>
 
-  <footer>SLINN — Solutions Line Innovation · Sistema DCM / ProdView</footer>
+  <footer>SLINN - Solutions Line Innovation · Sistema DCM / ProdView</footer>
 </div>
 
 <script>
@@ -265,7 +265,7 @@
     div.textContent = `[${time}] ${text}`;
     log.appendChild(div);
   }
-  logMsg('Sistema iniciado — link primário ativo.', 'ok');
+  logMsg('Sistema iniciado - link primário ativo.', 'ok');
 
   function simulateFailover(){
     const btn = document.getElementById('failbtn');
@@ -283,7 +283,7 @@
     setTimeout(() => {
       ld4g.style.background = 'var(--teal)'; ld4g.style.boxShadow = '0 0 6px var(--teal)';
       ls4g.textContent = 'ativo (contingência)';
-      logMsg('Chaveamento automático para 4G concluído — coleta de dados não interrompida.', 'ok');
+      logMsg('Chaveamento automático para 4G concluído - coleta de dados não interrompida.', 'ok');
     }, 1200);
 
     setTimeout(() => {
@@ -291,7 +291,7 @@
       lsEth.textContent = 'ativo';
       ld4g.style.background = 'var(--muted)'; ld4g.style.boxShadow = 'none';
       ls4g.textContent = 'standby';
-      logMsg('Link Ethernet/fibra restabelecido — rota primária retomada.', 'ok');
+      logMsg('Link Ethernet/fibra restabelecido - rota primária retomada.', 'ok');
       btn.disabled = false;
     }, 4200);
   }

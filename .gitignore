@@ -4,7 +4,7 @@ __pycache__/
 venv/
 env/
 
-# banco de dados de demonstração — é recriado automaticamente no primeiro acesso
+# banco de dados de demonstração - é recriado automaticamente no primeiro acesso
 prodview/data/*.db
 
 # logs locais de teste

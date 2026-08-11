@@ -1,12 +1,12 @@
 """
-ProdView — Monitoramento de Produção (versão web / Python)
+ProdView - Monitoramento de Produção (versão web / Python)
 ============================================================
 ENDTECH · Nacional Gás
 
 Base funcional do software: menu superior em cards (sem barra lateral,
 sem abas padrão), ícones Material Symbols em vez de emoji, muitos
 gráficos de produção no estilo Power BI, e conexão com banco de dados
-(SQLite local nesta demo — ver db.py para trocar pela base real).
+(SQLite local nesta demo - ver db.py para trocar pela base real).
 
 Rodar:
     pip install -r requirements.txt
@@ -25,7 +25,7 @@ import db
 import report_pdf
 
 # ---------------------------------------------------------------------
-# Paleta — ENDTECH / Nacional Gás, estilo Power BI (fundo claro, cards)
+# Paleta - ENDTECH / Nacional Gás, estilo Power BI (fundo claro, cards)
 # ---------------------------------------------------------------------
 BG = "#EEF1F6"
 PANEL = "#FFFFFF"
@@ -52,7 +52,7 @@ LINE_COLOR_MAP = {
     "Linha 04 · P13": CAT_COLORS[3],
 }
 
-# Navegação principal — ícone Material Symbols + rótulo (vira "card button")
+# Navegação principal - ícone Material Symbols + rótulo (vira "card button")
 NAV_ITEMS = [
     ("overview", "dashboard", "Visão Geral"),
     ("prod", "factory", "Produção"),
@@ -62,14 +62,14 @@ NAV_ITEMS = [
 ]
 
 st.set_page_config(
-    page_title="ProdView — ENDTECH · Nacional Gás",
+    page_title="ProdView - ENDTECH · Nacional Gás",
     page_icon=":material/local_gas_station:",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
 # ---------------------------------------------------------------------
-# CSS — visual estilo Power BI / Material UI, cards brancos, menu no topo
+# CSS - visual estilo Power BI / Material UI, cards brancos, menu no topo
 # ---------------------------------------------------------------------
 st.markdown(f"""
 <style>
@@ -132,7 +132,7 @@ st.markdown(f"""
   }}
   div.stDownloadButton > button:hover {{ background:{BLUE_SOFT}; }}
 
-  /* cards construídos com st.container(key=...) — evita <div> aberta/fechada
+  /* cards construídos com st.container(key=...) - evita <div> aberta/fechada
      em chamadas st.markdown separadas (cada chamada gera um nó isolado no DOM,
      o que deixava uma caixa branca vazia acima do conteúdo real) */
   .st-key-hero_a, .st-key-hero_b, .st-key-hero_c,
@@ -147,7 +147,7 @@ st.markdown(f"""
   .mini-stat-row:last-child {{ border-bottom:none; }}
   .big-line-name {{ font-size:15px; font-weight:600; color:{TEXT}; margin-top:2px; }}
 
-  /* menu principal — card buttons no topo (substitui as abas padrão) */
+  /* menu principal - card buttons no topo (substitui as abas padrão) */
   .st-key-nav_row div[data-testid="stHorizontalBlock"] {{ gap: 10px; }}
   .st-key-nav_row button {{
       height:52px; border-radius:12px !important; font-weight:600 !important; font-size:14px !important;
@@ -283,7 +283,7 @@ def delta_badge(pct: float) -> str:
 
 def ranking_rows(df: pd.DataFrame, name_col: str, value_col: str, fmt=lambda v: f"{v:.0f}%",
                   good: float = 95, warn: float = 75) -> str:
-    """Lista de barras horizontais coloridas (verde/âmbar/vermelho) — usada
+    """Lista de barras horizontais coloridas (verde/âmbar/vermelho) - usada
     nos heróis para comparar linhas entre si."""
     if df.empty:
         return f'<div style="color:{MUTED};font-size:13px;">Sem dados suficientes.</div>'
@@ -307,7 +307,7 @@ def time_ago(ts_str: str) -> str:
     try:
         ts = pd.to_datetime(ts_str)
     except Exception:
-        return "—"
+        return "-"
     delta = datetime.now() - ts.to_pydatetime()
     mins = int(delta.total_seconds() // 60)
     if mins < 1:
@@ -332,7 +332,7 @@ if "active_tab" not in st.session_state:
     st.session_state.active_tab = "overview"
 
 # ---------------------------------------------------------------------
-# Cabeçalho (marca + status + ações — tudo no topo, sem menu lateral)
+# Cabeçalho (marca + status + ações - tudo no topo, sem menu lateral)
 # ---------------------------------------------------------------------
 hour = datetime.now().hour
 turno = "1º turno" if 6 <= hour < 14 else ("2º turno" if 14 <= hour < 22 else "3º turno")
@@ -350,7 +350,7 @@ with hcol1:
           <div>
             <div style="font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:20px;color:{TEXT};">
               ENDTECH <span style="color:{MUTED};font-weight:500;font-size:13px;">· ProdView</span></div>
-            <div style="font-size:12.5px;color:{MUTED};">Monitoramento de Produção — Nacional Gás</div>
+            <div style="font-size:12.5px;color:{MUTED};">Monitoramento de Produção - Nacional Gás</div>
           </div>
         </div>
         """,
@@ -387,7 +387,7 @@ with hcol5:
 auto = st.toggle("Atualização automática a cada 8s", value=False)
 
 # ---------------------------------------------------------------------
-# Menu principal — card buttons no topo (substitui st.tabs)
+# Menu principal - card buttons no topo (substitui st.tabs)
 # ---------------------------------------------------------------------
 with st.container(key="nav_row"):
     nav_cols = st.columns(len(NAV_ITEMS))
@@ -410,7 +410,7 @@ lines_df = db.df_lines()
 kpis = db.kpis_today()
 
 # ---------------------------------------------------------------------
-# Linha de destaque (hero) — 3 cards que MUDAM conforme a aba ativa
+# Linha de destaque (hero) - 3 cards que MUDAM conforme a aba ativa
 # ---------------------------------------------------------------------
 hc1, hc2, hc3 = st.columns((1.15, 1.3, 1.1))
 _active = st.session_state.active_tab
@@ -458,7 +458,7 @@ if _active == "overview":
 
     with hc3, st.container(key="hero_c"):
         st.markdown(
-            f'<div class="card-title">{icon("report_problem")} Paradas — principais causas</div>'
+            f'<div class="card-title">{icon("report_problem")} Paradas - principais causas</div>'
             '<div class="card-sub">Últimos 7 dias</div>',
             unsafe_allow_html=True,
         )
@@ -501,7 +501,7 @@ elif _active == "prod":
 
     with hc2, st.container(key="hero_b"):
         st.markdown(
-            f'<div class="card-title">{icon("leaderboard")} Top linhas — 7 dias</div>'
+            f'<div class="card-title">{icon("leaderboard")} Top linhas - 7 dias</div>'
             '<div class="card-sub">Total produzido no período</div>',
             unsafe_allow_html=True,
         )
@@ -510,7 +510,7 @@ elif _active == "prod":
 
     with hc3, st.container(key="hero_c"):
         st.markdown(
-            f'<div class="card-title">{icon("insights")} OEE por linha — 7 dias</div>'
+            f'<div class="card-title">{icon("insights")} OEE por linha - 7 dias</div>'
             '<div class="card-sub">Média do período · meta 85%</div>',
             unsafe_allow_html=True,
         )
@@ -568,7 +568,7 @@ elif _active == "conn":
             unsafe_allow_html=True,
         )
         status_color = RED if link_down else GREEN
-        status_text = "QUEDA — em 4G" if link_down else "ATIVO"
+        status_text = "QUEDA - em 4G" if link_down else "ATIVO"
         st.markdown(
             f'<div class="hero-num-val big" style="color:{status_color};display:flex;align-items:center;gap:8px;">'
             f'{icon("wifi_off" if link_down else "wifi", 30, status_color)}{status_text}</div>'
@@ -632,7 +632,7 @@ else:  # reports
             end_fmt = pd.to_datetime(totals["span_end"]).strftime("%d/%m/%Y")
             ndays = (pd.to_datetime(totals["span_end"]) - pd.to_datetime(totals["span_start"])).days + 1
             st.markdown(
-                f'<div class="hero-num-val" style="font-size:20px;">{start_fmt} — {end_fmt}</div>'
+                f'<div class="hero-num-val" style="font-size:20px;">{start_fmt} - {end_fmt}</div>'
                 f'<div style="color:{MUTED};font-size:12px;margin-top:6px;">{ndays} dias de histórico</div>',
                 unsafe_allow_html=True,
             )
@@ -641,7 +641,7 @@ else:  # reports
 
     with hc3, st.container(key="hero_c"):
         st.markdown(
-            f'<div class="card-title">{icon("report_problem")} Paradas — 30 dias</div>'
+            f'<div class="card-title">{icon("report_problem")} Paradas - 30 dias</div>'
             '<div class="card-sub">Resumo para o relatório</div>',
             unsafe_allow_html=True,
         )
@@ -657,7 +657,7 @@ else:  # reports
 st.write("")
 
 # ---------------------------------------------------------------------
-# KPIs — stat cards com ícones Material
+# KPIs - stat cards com ícones Material
 # ---------------------------------------------------------------------
 k1, k2, k3, k4 = st.columns(4)
 k1.markdown(stat_card("inventory_2", "Botijões contabilizados hoje", f"{kpis['total_hoje']:,}".replace(",", "."), BLUE), unsafe_allow_html=True)
@@ -727,7 +727,7 @@ if st.session_state.active_tab == "overview":
             st.plotly_chart(style_fig(fig, height=300, legend=False), width="stretch")
 
     with col4:
-        st.markdown("##### Produção diária (7 dias) — total geral")
+        st.markdown("##### Produção diária (7 dias) - total geral")
         daily7 = db.df_daily_production(days=7)
         if daily7.empty:
             st.info("Sem histórico ainda.", icon=":material/info:")
@@ -777,7 +777,7 @@ elif st.session_state.active_tab == "prod":
             st.plotly_chart(style_fig(fig, height=340), width="stretch")
 
     with c2:
-        st.markdown("##### Paradas — causas (Pareto)")
+        st.markdown("##### Paradas - causas (Pareto)")
         if downtime.empty:
             st.info("Sem paradas registradas no período.", icon=":material/info:")
         else:
@@ -844,7 +844,7 @@ elif st.session_state.active_tab == "lines":
     hist = readings[readings["line_id"] == line_id] if not readings.empty else readings
     c1, c2 = st.columns((2, 1))
     with c1:
-        st.markdown(f"##### Velocidade — {line_pick}")
+        st.markdown(f"##### Velocidade - {line_pick}")
         if hist.empty:
             st.info("Sem leituras para esta linha ainda.", icon=":material/info:")
         else:
@@ -881,7 +881,7 @@ elif st.session_state.active_tab == "conn":
     st.markdown("##### Conectividade e redundância")
     st.caption(
         "Link primário via Ethernet/fibra da planta, com contingência automática por 4G "
-        "homologado — sem intervenção manual em caso de queda."
+        "homologado - sem intervenção manual em caso de queda."
     )
 
     conn_log = db.df_connectivity(limit=1)
@@ -913,14 +913,14 @@ elif st.session_state.active_tab == "conn":
     g4_dot = "dot-on" if link_down else "dot-off"
     lc1.markdown(
         f'<div style="background:{PANEL};border:1px solid {BORDER};border-radius:10px;padding:10px 14px;">'
-        f'<span class="{eth_dot}"></span>&nbsp; {icon("settings_ethernet", 16)} Ethernet / fibra (primário) — '
+        f'<span class="{eth_dot}"></span>&nbsp; {icon("settings_ethernet", 16)} Ethernet / fibra (primário) - '
         f'<span style="color:{MUTED};font-size:12px;">'
         f'{"indisponível" if link_down else "ativo"}</span></div>',
         unsafe_allow_html=True,
     )
     lc2.markdown(
         f'<div style="background:{PANEL};border:1px solid {BORDER};border-radius:10px;padding:10px 14px;">'
-        f'<span class="{g4_dot}"></span>&nbsp; {icon("signal_cellular_alt", 16)} 4G homologado (contingência) — '
+        f'<span class="{g4_dot}"></span>&nbsp; {icon("signal_cellular_alt", 16)} 4G homologado (contingência) - '
         f'<span style="color:{MUTED};font-size:12px;">'
         f'{"ativo (contingência)" if link_down else "standby"}</span></div>',
         unsafe_allow_html=True,
@@ -932,11 +932,11 @@ elif st.session_state.active_tab == "conn":
         db.log_connectivity("ethernet", "queda", "Link Ethernet/fibra indisponível.")
         ph.warning("Link Ethernet/fibra indisponível.", icon=":material/wifi_off:")
         time.sleep(1.2)
-        db.log_connectivity("4g", "ativo", "Chaveamento automático para 4G concluído — coleta de dados não interrompida.")
-        ph.success("Chaveamento automático para 4G concluído — coleta de dados não interrompida.", icon=":material/wifi:")
+        db.log_connectivity("4g", "ativo", "Chaveamento automático para 4G concluído - coleta de dados não interrompida.")
+        ph.success("Chaveamento automático para 4G concluído - coleta de dados não interrompida.", icon=":material/wifi:")
         time.sleep(1.6)
-        db.log_connectivity("ethernet", "restabelecido", "Link Ethernet/fibra restabelecido — rota primária retomada.")
-        ph.success("Link Ethernet/fibra restabelecido — rota primária retomada.", icon=":material/check_circle:")
+        db.log_connectivity("ethernet", "restabelecido", "Link Ethernet/fibra restabelecido - rota primária retomada.")
+        ph.success("Link Ethernet/fibra restabelecido - rota primária retomada.", icon=":material/check_circle:")
         time.sleep(0.8)
         st.rerun()
 
@@ -1012,7 +1012,7 @@ elif st.session_state.active_tab == "reports":
 
 st.markdown(
     f"<div style='text-align:center;color:{MUTED};font-size:12px;padding:24px 0 8px;'>"
-    "ENDTECH · Soluções em Engenharia — Sistema ProdView</div>",
+    "ENDTECH · Soluções em Engenharia - Sistema ProdView</div>",
     unsafe_allow_html=True,
 )
 

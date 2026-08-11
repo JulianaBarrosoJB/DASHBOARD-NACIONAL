@@ -1,5 +1,5 @@
 """
-ProdView — camada de dados
+ProdView - camada de dados
 ==========================
 Hoje esta camada fala com um SQLite local (arquivo `data/prodview.db`),
 gerado e populado automaticamente na primeira execução, só para servir
@@ -126,7 +126,7 @@ def seed_if_empty(force: bool = False):
     random.seed(42)
     conn = get_conn()
     with conn:
-        # tabelas filhas primeiro — "lines" tem FOREIGN KEY apontando pra ela
+        # tabelas filhas primeiro - "lines" tem FOREIGN KEY apontando pra ela
         conn.execute("DELETE FROM readings")
         conn.execute("DELETE FROM daily_production")
         conn.execute("DELETE FROM downtime_events")
@@ -195,7 +195,7 @@ def seed_if_empty(force: bool = False):
 
         conn.execute(
             "INSERT INTO connectivity_log (ts, link, event, note) VALUES (?,?,?,?)",
-            (now.isoformat(timespec="seconds"), "sistema", "iniciado", "Sistema iniciado — link primário ativo."),
+            (now.isoformat(timespec="seconds"), "sistema", "iniciado", "Sistema iniciado - link primário ativo."),
         )
     conn.close()
 
@@ -206,7 +206,7 @@ def seed_if_empty(force: bool = False):
 
 def simulate_tick():
     """Gera uma nova leitura por linha, como se um CLP tivesse acabado
-    de reportar dados — grava direto no banco (INSERT real)."""
+    de reportar dados - grava direto no banco (INSERT real)."""
     conn = get_conn()
     now = datetime.now()
     with conn:
@@ -334,7 +334,7 @@ def df_connectivity(limit: int = 40) -> pd.DataFrame:
 
 
 def oee_breakdown(days: int = 1) -> dict:
-    """Médias de Disponibilidade / Performance / Qualidade / OEE — para os
+    """Médias de Disponibilidade / Performance / Qualidade / OEE - para os
     gauges no estilo 'torre de controle'."""
     daily = df_daily_production(days=days)
     if daily.empty:
@@ -348,7 +348,7 @@ def oee_breakdown(days: int = 1) -> dict:
 
 
 def df_line_target_progress() -> pd.DataFrame:
-    """% da velocidade-alvo atingida hoje, por linha — para o ranking
+    """% da velocidade-alvo atingida hoje, por linha - para o ranking
     'melhores/piores linhas' (equivalente ao 'stores by goal')."""
     readings = df_readings_today()
     lines = df_lines()
@@ -442,7 +442,7 @@ def kpis_today() -> dict:
 
 
 # ---------------------------------------------------------------------
-# Extras — dão conteúdo diferente ao "hero" de cada aba do menu
+# Extras - dão conteúdo diferente ao "hero" de cada aba do menu
 # ---------------------------------------------------------------------
 
 def production_period_comparison(days: int = 7) -> dict:
@@ -459,7 +459,7 @@ def production_period_comparison(days: int = 7) -> dict:
 
 
 def df_line_units_ranking(days: int = 7) -> pd.DataFrame:
-    """Ranking de linhas por total produzido no período — para o hero da aba Produção."""
+    """Ranking de linhas por total produzido no período - para o hero da aba Produção."""
     daily = df_daily_production(days=days)
     if daily.empty:
         return daily
@@ -499,17 +499,17 @@ def fastest_line_now() -> dict:
     """Linha com maior velocidade na leitura mais recente de hoje."""
     readings = df_readings_today()
     if readings.empty:
-        return {"name": "—", "speed": 0.0}
+        return {"name": "-", "speed": 0.0}
     latest = readings.sort_values("ts").groupby("line_id").tail(1)
     on = latest[latest["status"] == "on"]
     if on.empty:
-        return {"name": "—", "speed": 0.0}
+        return {"name": "-", "speed": 0.0}
     top = on.sort_values("speed", ascending=False).iloc[0]
     return {"name": top["name"], "speed": float(top["speed"])}
 
 
 def last_activity() -> dict:
-    """Último evento registrado no banco (leitura manual ou parada) — o mais recente entre os dois."""
+    """Último evento registrado no banco (leitura manual ou parada) - o mais recente entre os dois."""
     conn = get_conn()
     r1 = conn.execute(
         "SELECT r.ts AS ts, l.name AS name, 'leitura' AS kind, CAST(r.speed AS TEXT) AS val "
@@ -549,7 +549,7 @@ def connectivity_stats(days: int = 30) -> dict:
 
 
 def db_totals() -> dict:
-    """Contagens gerais do banco — para o hero da aba Relatórios."""
+    """Contagens gerais do banco - para o hero da aba Relatórios."""
     conn = get_conn()
     out = {}
     for t in ("readings", "daily_production", "downtime_events", "connectivity_log"):
