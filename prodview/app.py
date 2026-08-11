@@ -238,10 +238,12 @@ def gauge_fig(value, title, color, height=210):
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
         value=value,
+        domain={"x": [0.12, 0.88], "y": [0, 1]},
         number={"suffix": "%", "font": {"color": TEXT, "family": "Space Grotesk", "size": 26}},
         title={"text": title, "font": {"color": MUTED, "size": 13}},
         gauge={
-            "axis": {"range": [0, 100], "tickcolor": MUTED, "tickfont": {"size": 9}},
+            "axis": {"range": [0, 100], "tickcolor": MUTED, "tickfont": {"size": 9},
+                     "tickvals": [0, 50, 100]},
             "bar": {"color": color, "thickness": 0.28},
             "bgcolor": BG,
             "borderwidth": 0,
@@ -251,7 +253,7 @@ def gauge_fig(value, title, color, height=210):
             ],
         },
     ))
-    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", height=height, margin=dict(l=18, r=18, t=40, b=6),
+    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", height=height, margin=dict(l=36, r=36, t=40, b=10),
                        font=dict(family="Inter, sans-serif", color=TEXT))
     return fig
 
