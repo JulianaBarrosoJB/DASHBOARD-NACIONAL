@@ -93,6 +93,10 @@ class MqttIngestWorker:
                 db.upsert_inverter(inverter_id, site_id, payload.get("name", inverter_id),
                                     payload.get("ts") or _now_iso())
                 db.insert_telemetry(payload)
+            elif kind == "current_fast":
+                db.upsert_inverter(inverter_id, site_id, payload.get("name", inverter_id),
+                                    payload.get("ts") or _now_iso())
+                db.insert_fast_current(payload)
             elif kind == "fault":
                 db.upsert_inverter(inverter_id, site_id, payload.get("name", inverter_id),
                                     payload.get("ts") or _now_iso())
