@@ -43,11 +43,11 @@ fields:
 
   frequency_Hz:
     address: 5              # P0005 - Frequência do motor (Hz)
-    scale: 100
-    signed: true
+    scale: 10
+    signed: false
 
   voltage_V:
-    address: 6               # P0006 - Tensão de saída do motor (V)
+    address: 7               # P0007 - Tensão de saída do motor (V)
     scale: 1
     signed: false
 
@@ -63,20 +63,25 @@ fields:
     signed: false
 
   fault_code:
-    address: 682             # P0682 - Código da última falha (0 = sem falha)
+    address: 49              # P0049 - Falha atual (0 = sem falha)
     scale: 1
     signed: false
 
 # Bits conhecidos da status_word (P0680) - confirme no manual do seu firmware.
 status_word_bits:
-  0: ready              # pronto
-  1: running            # rodando
-  2: general_fault      # falha geral
-  3: undervoltage       # subtensão
-  4: forward            # sentido de giro horário
-  5: reverse            # sentido de giro anti-horário
-  6: jog
-  7: alarm              # alarme ativo (não desarma)
+  1: run_command        # houve comando Gira
+  4: quick_stop         # parada rápida ativa
+  5: second_ramp        # 2ª rampa ativa
+  6: config_state       # estado de configuração
+  7: alarm              # alarme ativo
+  8: running            # motor/inversor girando
+  9: enabled            # habilitação geral
+  10: forward           # sentido horário
+  11: jog               # JOG ativo
+  12: remote            # modo remoto
+  13: undervoltage      # subtensão
+  14: automatic_pid     # PID em automático
+  15: general_fault     # falha ativa
 
 # Tabela (parcial, não exaustiva) de códigos de falha WEG mais comuns.
 # fault_code que não estiver aqui é exibido no dashboard como "Falha Fxxxx"
