@@ -183,31 +183,75 @@ with tab_live:
         format_func=lambda i: all_inv.set_index("id").loc[i, "name"] if not all_inv.empty else i,
     )
 
-    @st.fragment(run_every="3s")
+    @st.fragment(run_every="1s")
     def live_current_chart(range_minutes: int, selected_ids: list):
-        df = db.df_telemetry_recent(minutes=range_minutes)
-        if not df.empty and selected_ids:
-            df = df[df["inverter_id"].isin(selected_ids)]
-        if df.empty:
-            st.info("Sem dados no período selecionado.")
-            return
+        fast = db.df_fast_current_recent(minutes=range_minutes)
+        if not fast.empty and selected_ids:
+            fast = fast[fast["inverter_id"].isin(selected_ids)]
 
-        fig = go.Figure()
-        for idx, (inv_id, sub) in enumerate(df.groupby("inverter_id")):
-            color = CAT_COLORS[idx % len(CAT_COLORS)]
-            fig.add_trace(go.Scatter(
-                x=sub["ts"], y=sub["current_A"], mode="lines", name=sub["name"].iloc[0],
-                line=dict(color=color, width=2),
-            ))
-        fig.update_layout(
-            height=420, margin=dict(l=10, r=10, t=30, b=10),
-            plot_bgcolor=PANEL, paper_bgcolor=PANEL,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02),
-            yaxis_title="Corrente (A)", xaxis_title=None,
-        )
-        st.plotly_chart(fig, use_container_width=True, key=f"live_current_{range_minutes}")
+        if not fast.empty:
+            latest = fast.sort_values("ts").groupby("inverter_id").tail(1)
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Maior pico na janela", f"{fast['current_max_A'].max():.1f} A")
+            c2.metric("Corrente média", f"{fast['current_avg_A'].mean():.1f} A")
+            c3.metric("Amostras representadas", f"{int(fast['samples'].fillna(0).sum()):,}".replace(",", "."))
+
+            fig = go.Figure()
+            for idx, (inv_id, sub) in enumerate(fast.groupby("inverter_id")):
+                color = CAT_COLORS[idx % len(CAT_COLORS)]
+                name = sub["name"].iloc[0] if pd.notna(sub["name"].iloc[0]) else inv_id
+                fig.add_trace(go.Scatter(
+                    x=sub["ts"], y=sub["current_avg_A"], mode="lines",
+                    name=f"{name} · média",
+                    line=dict(color=color, width=2),
+                ))
+                fig.add_trace(go.Scatter(
+                    x=sub["ts"], y=sub["current_max_A"], mode="lines",
+                    name=f"{name} · pico",
+                    line=dict(color=color, width=1, dash="dot"),
+                ))
+            fig.update_layout(
+                height=430, margin=dict(l=10, r=10, t=30, b=10),
+                plot_bgcolor=PANEL, paper_bgcolor=PANEL,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                yaxis_title="Corrente (A)", xaxis_title=None,
+            )
+            st.plotly_chart(fig, use_container_width=True, key=f"live_current_fast_{range_minutes}")
+            st.caption(
+                "A linha contínua é a média de cada janela MQTT; a pontilhada preserva "
+                "o maior pico visto nas amostras locais rápidas."
+            )
+        else:
+            # Fallback para instalações sem fast_monitoring.
+            df = db.df_telemetry_recent(minutes=range_minutes)
+            if not df.empty and selected_ids:
+                df = df[df["inverter_id"].isin(selected_ids)]
+            if df.empty:
+                st.info("Sem dados no período selecionado.")
+                return
+
+            fig = go.Figure()
+            for idx, (inv_id, sub) in enumerate(df.groupby("inverter_id")):
+                color = CAT_COLORS[idx % len(CAT_COLORS)]
+                fig.add_trace(go.Scatter(
+                    x=sub["ts"], y=sub["current_A"], mode="lines", name=sub["name"].iloc[0],
+                    line=dict(color=color, width=2),
+                ))
+            fig.update_layout(
+                height=420, margin=dict(l=10, r=10, t=30, b=10),
+                plot_bgcolor=PANEL, paper_bgcolor=PANEL,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                yaxis_title="Corrente (A)", xaxis_title=None,
+            )
+            st.plotly_chart(fig, use_container_width=True, key=f"live_current_{range_minutes}")
 
         with st.expander("Outras variáveis (frequência, rotação, torque)"):
+            df = db.df_telemetry_recent(minutes=range_minutes)
+            if not df.empty and selected_ids:
+                df = df[df["inverter_id"].isin(selected_ids)]
+            if df.empty:
+                st.info("Sem telemetria completa no período.")
+                return
             metric = st.selectbox(
                 "Variável", ["frequency_Hz", "speed_rpm", "torque_pct", "dc_link_V", "voltage_V"],
                 format_func=lambda m: {
