@@ -42,6 +42,17 @@ CREATE TABLE IF NOT EXISTS telemetry (
     status_word INTEGER,
     fault_code INTEGER,
     fault_description TEXT,
+    last_fault_code INTEGER,
+    last_fault_description TEXT,
+    last_fault_current_A REAL,
+    last_fault_dc_link_V REAL,
+    last_fault_frequency_Hz REAL,
+    last_fault_igbt_temp_C REAL,
+    last_fault_status_word INTEGER,
+    second_fault_code INTEGER,
+    second_fault_description TEXT,
+    third_fault_code INTEGER,
+    third_fault_description TEXT,
     comm_error INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_telemetry_inv_ts ON telemetry(inverter_id, ts);
@@ -76,6 +87,26 @@ def init_db():
     conn = get_conn()
     with conn:
         conn.executescript(SCHEMA)
+
+        # Migração leve para instalações existentes: CREATE TABLE IF NOT EXISTS
+        # não adiciona colunas novas em bancos já criados.
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(telemetry)")}
+        migrations = {
+            "last_fault_code": "INTEGER",
+            "last_fault_description": "TEXT",
+            "last_fault_current_A": "REAL",
+            "last_fault_dc_link_V": "REAL",
+            "last_fault_frequency_Hz": "REAL",
+            "last_fault_igbt_temp_C": "REAL",
+            "last_fault_status_word": "INTEGER",
+            "second_fault_code": "INTEGER",
+            "second_fault_description": "TEXT",
+            "third_fault_code": "INTEGER",
+            "third_fault_description": "TEXT",
+        }
+        for column, sql_type in migrations.items():
+            if column not in existing:
+                conn.execute(f"ALTER TABLE telemetry ADD COLUMN {column} {sql_type}")
     conn.close()
 
 
@@ -99,13 +130,21 @@ def insert_telemetry(row: dict):
     with conn:
         conn.execute(
             "INSERT INTO telemetry (ts, inverter_id, current_A, voltage_V, dc_link_V, frequency_Hz, "
-            "speed_rpm, torque_pct, status_word, fault_code, fault_description, comm_error) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "speed_rpm, torque_pct, status_word, fault_code, fault_description, "
+            "last_fault_code, last_fault_description, last_fault_current_A, last_fault_dc_link_V, "
+            "last_fault_frequency_Hz, last_fault_igbt_temp_C, last_fault_status_word, "
+            "second_fault_code, second_fault_description, third_fault_code, third_fault_description, comm_error) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 row.get("ts"), row.get("inverter_id"), row.get("current_A"), row.get("voltage_V"),
                 row.get("dc_link_V"), row.get("frequency_Hz"), row.get("speed_rpm"), row.get("torque_pct"),
                 row.get("status_word"), row.get("fault_code"), row.get("fault_description"),
-                1 if row.get("comm_error") else 0,
+                row.get("last_fault_code"), row.get("last_fault_description"),
+                row.get("last_fault_current_A"), row.get("last_fault_dc_link_V"),
+                row.get("last_fault_frequency_Hz"), row.get("last_fault_igbt_temp_C"),
+                row.get("last_fault_status_word"), row.get("second_fault_code"),
+                row.get("second_fault_description"), row.get("third_fault_code"),
+                row.get("third_fault_description"), 1 if row.get("comm_error") else 0,
             ),
         )
     conn.close()
