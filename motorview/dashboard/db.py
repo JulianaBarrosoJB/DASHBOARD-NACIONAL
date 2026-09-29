@@ -67,6 +67,21 @@ CREATE TABLE IF NOT EXISTS faults (
 );
 CREATE INDEX IF NOT EXISTS idx_faults_ts ON faults(ts);
 
+CREATE TABLE IF NOT EXISTS fast_current (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    window_start TEXT,
+    window_end TEXT,
+    inverter_id TEXT NOT NULL,
+    current_A REAL,
+    current_min_A REAL,
+    current_max_A REAL,
+    current_avg_A REAL,
+    samples INTEGER,
+    sample_interval_ms INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_fast_current_inv_ts ON fast_current(inverter_id, ts);
+
 CREATE TABLE IF NOT EXISTS connectivity_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,
@@ -150,6 +165,23 @@ def insert_telemetry(row: dict):
     conn.close()
 
 
+def insert_fast_current(row: dict):
+    conn = get_conn()
+    with conn:
+        conn.execute(
+            "INSERT INTO fast_current (ts, window_start, window_end, inverter_id, current_A, "
+            "current_min_A, current_max_A, current_avg_A, samples, sample_interval_ms) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                row.get("ts"), row.get("window_start"), row.get("window_end"),
+                row.get("inverter_id"), row.get("current_A"), row.get("current_min_A"),
+                row.get("current_max_A"), row.get("current_avg_A"), row.get("samples"),
+                row.get("sample_interval_ms"),
+            ),
+        )
+    conn.close()
+
+
 def insert_fault(row: dict):
     conn = get_conn()
     with conn:
@@ -203,6 +235,27 @@ def df_telemetry_recent(minutes: int = 60, inverter_id: str | None = None) -> pd
     conn.close()
     if not df.empty:
         df["ts"] = pd.to_datetime(df["ts"], utc=True).dt.tz_localize(None)
+    return df
+
+
+def df_fast_current_recent(minutes: int = 15, inverter_id: str | None = None) -> pd.DataFrame:
+    conn = get_conn()
+    start = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+    query = (
+        "SELECT f.*, i.name FROM fast_current f "
+        "LEFT JOIN inverters i ON i.id = f.inverter_id WHERE f.ts >= ?"
+    )
+    params = [start]
+    if inverter_id:
+        query += " AND f.inverter_id = ?"
+        params.append(inverter_id)
+    query += " ORDER BY f.ts"
+    df = pd.read_sql_query(query, conn, params=params)
+    conn.close()
+    if not df.empty:
+        for col in ("ts", "window_start", "window_end"):
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], utc=True).dt.tz_localize(None)
     return df
 
 
