@@ -8,10 +8,24 @@ serial:
   parity: "E"                # CFW500: P0311=1 (8E1 padrão). Para o teste com AS320P-B use "N".
   stopbits: 1
   bytesize: 8
-  timeout: 1.0                 # segundos, timeout de resposta por leitura
+  timeout: 0.3                 # resposta RTU normalmente é rápida; evita travar o ciclo em slave offline
+  retries: 0                    # não repete requisição ausente; importante para monitoramento rápido
 
-poll_interval_seconds: 2        # intervalo entre ciclos de leitura de todos os inversores
-fault_poll_interval_seconds: 2  # intervalo mínimo para checar mudança de estado de falha (publica na hora)
+poll_interval_seconds: 2        # telemetria completa de todos os inversores
+comm_error_heartbeat_seconds: 60 # erro de comunicação: publica na mudança e depois só heartbeat
+
+# Monitoramento de alta frequência para motores críticos.
+# A corrente bruta fica LOCAL no Raspberry a cada 100 ms.
+# O HiveMQ recebe somente resumo de 500 ms com min/max/média/última.
+fast_monitoring:
+  enabled: true
+  inverters:
+    - inv01
+  current_sample_interval_ms: 100
+  current_publish_interval_ms: 500
+  fault_poll_interval_ms: 250
+  raw_flush_interval_ms: 1000
+  raw_retention_days: 7
 
 site_id: planta1                # identifica esta unidade/planta nos tópicos MQTT
 
