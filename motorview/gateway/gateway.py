@@ -83,8 +83,12 @@ def main():
         readers[inv["id"]] = InverterReader(serial_client, inv["slave_id"], register_maps[str(map_path)])
 
     store = LocalStore(cfg["local_log"]["db_path"], cfg["local_log"].get("retention_days", 90))
-    mqtt_pub = MqttPublisher(cfg["mqtt"], site_id)
-    mqtt_pub.connect()
+
+    mqtt_enabled = cfg.get("mqtt", {}).get("enabled", True)
+    mqtt_pub = None
+    if mqtt_enabled:
+        mqtt_pub = MqttPublisher(cfg["mqtt"], site_id)
+        mqtt_pub.connect()
 
     signal.signal(signal.SIGINT, _handle_stop)
     signal.signal(signal.SIGTERM, _handle_stop)
@@ -94,8 +98,16 @@ def main():
     poll_interval = cfg.get("poll_interval_seconds", 2)
     last_purge = time.monotonic()
 
-    log.info("MotorView Gateway iniciado - site=%s, %d inversor(es), publicando em %s:%s",
-             site_id, len(readers), cfg["mqtt"]["host"], cfg["mqtt"]["port"])
+    if mqtt_enabled:
+        log.info(
+            "MotorView Gateway iniciado - site=%s, %d inversor(es), publicando em %s:%s",
+            site_id, len(readers), cfg["mqtt"]["host"], cfg["mqtt"]["port"]
+        )
+    else:
+        log.info(
+            "MotorView Gateway iniciado em modo local - site=%s, %d inversor(es), MQTT desabilitado",
+            site_id, len(readers)
+        )
 
     while _running:
         cycle_start = time.monotonic()
@@ -107,17 +119,25 @@ def main():
                 # falha de comunicação Modbus - registra como evento de conectividade,
                 # o dashboard mostra o inversor como "sem leitura" até voltar.
                 payload = {"ts": ts, "inverter_id": inv_id, "name": inv_names[inv_id], "comm_error": True}
-                topic = mqtt_pub.topic_telemetry(inv_id)
+                topic = mqtt_pub.topic_telemetry(inv_id) if mqtt_pub else f"local/{site_id}/{inv_id}/telemetry"
                 store.record_telemetry(inv_id, topic, payload)
-                mqtt_pub.publish(topic, payload, retain=True)
+                if mqtt_pub:
+                    mqtt_pub.publish(topic, payload, retain=True)
+                log.warning("%s sem resposta Modbus", inv_id)
                 continue
 
             payload = {"ts": ts, "inverter_id": inv_id, "name": inv_names[inv_id], "comm_error": False, **values}
 
-            topic = mqtt_pub.topic_telemetry(inv_id)
+            topic = mqtt_pub.topic_telemetry(inv_id) if mqtt_pub else f"local/{site_id}/{inv_id}/telemetry"
             row_id = store.record_telemetry(inv_id, topic, payload)
-            if mqtt_pub.publish(topic, payload, retain=True):
+
+            if mqtt_pub:
+                if mqtt_pub.publish(topic, payload, retain=True):
+                    store.mark_sent("telemetry_log", row_id)
+            else:
                 store.mark_sent("telemetry_log", row_id)
+
+            log.info("%s leitura: %s", inv_id, values)
 
             fault_code = int(values.get("fault_code") or 0)
             if fault_code != last_fault_code[inv_id]:
@@ -130,9 +150,12 @@ def main():
                     "fault_description": values.get("fault_description"),
                     "active": fault_code != 0,
                 }
-                fault_topic = mqtt_pub.topic_fault(inv_id)
+                fault_topic = mqtt_pub.topic_fault(inv_id) if mqtt_pub else f"local/{site_id}/{inv_id}/fault"
                 frow_id = store.record_fault(inv_id, fault_topic, fault_payload)
-                if mqtt_pub.publish(fault_topic, fault_payload, retain=False):
+                if mqtt_pub:
+                    if mqtt_pub.publish(fault_topic, fault_payload, retain=False):
+                        store.mark_sent("fault_log", frow_id)
+                else:
                     store.mark_sent("fault_log", frow_id)
                 if fault_code:
                     log.warning("Falha detectada em %s: %s", inv_id, fault_payload["fault_description"])
@@ -140,7 +163,7 @@ def main():
                     log.info("Falha em %s foi resetada", inv_id)
 
         # reenvia o que ficou pendente de ciclos anteriores (queda de MQTT)
-        if mqtt_pub.connected:
+        if mqtt_pub and mqtt_pub.connected:
             for row in store.pending("telemetry_log"):
                 if mqtt_pub.publish(row["topic"], row["payload"], retain=True):
                     store.mark_sent("telemetry_log", row["id"])
@@ -156,7 +179,8 @@ def main():
         time.sleep(max(0.0, poll_interval - elapsed))
 
     log.info("Encerrando MotorView Gateway...")
-    mqtt_pub.disconnect()
+    if mqtt_pub:
+        mqtt_pub.disconnect()
     store.close()
     serial_client.close()
 
