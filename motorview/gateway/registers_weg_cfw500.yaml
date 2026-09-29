@@ -67,6 +67,46 @@ fields:
     scale: 1
     signed: false
 
+  last_fault_code:
+    address: 50              # P0050 - Última falha registrada
+    scale: 1
+    signed: false
+
+  last_fault_current_A:
+    address: 51              # P0051 - Corrente de saída na última falha
+    scale: 10
+    signed: false
+
+  last_fault_dc_link_V:
+    address: 52              # P0052 - Tensão do barramento CC na última falha
+    scale: 1
+    signed: false
+
+  last_fault_frequency_Hz:
+    address: 53              # P0053 - Frequência de saída na última falha
+    scale: 10
+    signed: false
+
+  last_fault_igbt_temp_C:
+    address: 54              # P0054 - Temperatura dos IGBTs na última falha
+    scale: 1
+    signed: true
+
+  last_fault_status_word:
+    address: 55              # P0055 - Estado lógico (P0680) na última falha
+    scale: 1
+    signed: false
+
+  second_fault_code:
+    address: 60              # P0060 - Segunda falha
+    scale: 1
+    signed: false
+
+  third_fault_code:
+    address: 70              # P0070 - Terceira falha
+    scale: 1
+    signed: false
+
 # Bits conhecidos da status_word (P0680) - confirme no manual do seu firmware.
 status_word_bits:
   1: run_command        # houve comando Gira
