@@ -60,30 +60,72 @@ class InverterReader:
         self.slave_id = slave_id
         self.register_map = register_map
 
+    def _read_block(self, address: int, count: int):
+        """Compatibilidade com pymodbus 3.x: versões recentes usam device_id;
+        versões anteriores usavam slave."""
+        try:
+            return self.client.read_holding_registers(
+                address=address, count=count, device_id=self.slave_id
+            )
+        except TypeError:
+            return self.client.read_holding_registers(
+                address=address, count=count, slave=self.slave_id
+            )
+
     def read(self) -> dict | None:
-        """Lê todos os campos do mapa em uma única (ou poucas) chamadas Modbus.
-        Retorna None em caso de falha de comunicação (timeout/CRC/etc.)."""
-        addresses = {spec["address"]: name for name, spec in self.register_map.fields.items()}
-        if not addresses:
+        """Lê os campos do mapa em blocos Modbus válidos (máx. 125 registradores).
+
+        O mapa do CFW500 possui parâmetros próximos de zero e outros na faixa
+        P0680; tentar ler tudo em uma única chamada ultrapassa o limite do
+        function code 03. Por isso os endereços são separados em blocos.
+        """
+        address_to_names: dict[int, list[str]] = {}
+        for name, spec in self.register_map.fields.items():
+            address_to_names.setdefault(int(spec["address"]), []).append(name)
+
+        if not address_to_names:
             return {}
 
-        lo, hi = min(addresses), max(addresses)
-        count = hi - lo + 1
-        try:
-            result = self.client.read_holding_registers(address=lo, count=count, slave=self.slave_id)
-        except Exception as exc:  # comunicação instável no barramento RS-485
-            log.warning("Falha ao ler slave %s: %s", self.slave_id, exc)
-            return None
+        sorted_addresses = sorted(address_to_names)
+        blocks: list[tuple[int, int]] = []
+        block_start = block_end = sorted_addresses[0]
 
-        if result is None or result.isError():
-            log.warning("Resposta Modbus inválida do slave %s: %s", self.slave_id, result)
-            return None
+        for address in sorted_addresses[1:]:
+            # Pode haver lacunas; o importante é não ultrapassar 125 registros.
+            if address - block_start + 1 <= 125:
+                block_end = address
+            else:
+                blocks.append((block_start, block_end))
+                block_start = block_end = address
+        blocks.append((block_start, block_end))
 
-        raw_values = {
-            name: result.registers[address - lo]
-            for address, name in addresses.items()
-            if address - lo < len(result.registers)
-        }
+        raw_values: dict[str, int] = {}
+
+        for lo, hi in blocks:
+            count = hi - lo + 1
+            try:
+                result = self._read_block(lo, count)
+            except Exception as exc:  # comunicação instável no barramento RS-485
+                log.warning(
+                    "Falha ao ler slave %s, bloco %s..%s: %s",
+                    self.slave_id, lo, hi, exc
+                )
+                return None
+
+            if result is None or result.isError():
+                log.warning(
+                    "Resposta Modbus inválida do slave %s, bloco %s..%s: %s",
+                    self.slave_id, lo, hi, result
+                )
+                return None
+
+            for address in sorted_addresses:
+                if lo <= address <= hi:
+                    index = address - lo
+                    if index < len(result.registers):
+                        for name in address_to_names[address]:
+                            raw_values[name] = result.registers[index]
+
         decoded = self.register_map.decode(raw_values)
 
         status_word = raw_values.get("status_word")
