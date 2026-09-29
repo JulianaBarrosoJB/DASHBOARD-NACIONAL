@@ -1,0 +1,2 @@
+motorview/gateway/install.sh text eol=lf
+motorview/gateway/*.service text eol=lf

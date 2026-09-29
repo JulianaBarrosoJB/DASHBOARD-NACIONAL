@@ -1,0 +1,15 @@
+[Unit]
+Description=MotorView Gateway - leitura Modbus RTU dos inversores + publicação MQTT
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/motorview/gateway
+ExecStart=/home/pi/motorview/gateway/.venv/bin/python /home/pi/motorview/gateway/gateway.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

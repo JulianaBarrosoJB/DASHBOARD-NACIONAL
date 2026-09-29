@@ -1,0 +1,46 @@
+# Copie este arquivo para "config.yaml" (mesma pasta) e ajuste os valores.
+# config.yaml é ignorado pelo git (contém host/senha do broker) - veja .gitignore.
+
+serial:
+  port: /dev/ttyUSB0       # Windows (teste local): "COM3" etc. No Raspberry Pi normalmente
+                            # /dev/ttyUSB0 (conversor USB-RS485) ou /dev/ttyAMA0 (GPIO UART).
+  baudrate: 19200           # deve bater com o parâmetro Pxxx de baud rate configurado no inversor
+  parity: "E"                # "N" (nenhuma), "E" (par) ou "O" (ímpar) - padrão de fábrica WEG = par
+  stopbits: 1
+  bytesize: 8
+  timeout: 1.0                 # segundos, timeout de resposta por leitura
+
+poll_interval_seconds: 2        # intervalo entre ciclos de leitura de todos os inversores
+fault_poll_interval_seconds: 2  # intervalo mínimo para checar mudança de estado de falha (publica na hora)
+
+site_id: planta1                # identifica esta unidade/planta nos tópicos MQTT
+
+inverters:
+  - id: inv01
+    name: "Motor 01 - Linha 01"
+    slave_id: 1
+    register_map: registers_weg_cfw500.yaml
+  - id: inv02
+    name: "Motor 02 - Linha 02"
+    slave_id: 2
+    register_map: registers_weg_cfw500.yaml
+  # adicione um bloco "- id: ..." por inversor no barramento RS-485
+  # (cada um com seu próprio slave_id, configurado no parâmetro P0312 do CFW-500)
+
+mqtt:
+  host: xxxxxxxx.s1.eu.hivemq.cloud   # troque pelo host do seu cluster HiveMQ Cloud
+  port: 8883                            # TLS (HiveMQ Cloud free tier exige TLS na 8883)
+  use_tls: true
+  username: motorview-gateway
+  password: "TROQUE-ESTA-SENHA"          # prefira MOTORVIEW_MQTT_PASSWORD via .env (veja README)
+  client_id: motorview-gateway-planta1   # único por dispositivo/gateway
+  qos: 1
+  keepalive_seconds: 30
+
+local_log:
+  db_path: data/motorview_gateway.db     # log local (SQLite) de tudo que é lido, mesmo sem internet
+  retention_days: 90                     # linhas mais antigas que isso são limpas automaticamente
+
+logging:
+  level: INFO                             # DEBUG para depurar leituras Modbus/MQTT
+  file: data/gateway.log

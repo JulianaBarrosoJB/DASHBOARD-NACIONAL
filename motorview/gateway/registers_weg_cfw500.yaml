@@ -1,0 +1,95 @@
+# Mapa de registradores Modbus RTU - WEG CFW-500 (padrão de fábrica)
+# =====================================================================
+# ATENÇÃO - CONFIRME ANTES DE USAR EM PRODUÇÃO:
+#   No CFW-500, o endereço do registrador Modbus (function code 03,
+#   "Read Holding Registers") é, por padrão de fábrica, o próprio número
+#   do parâmetro (ex.: P0003 -> endereço 3). Os endereços e fatores de
+#   escala abaixo são os mais comumente citados no manual "CFW-500 -
+#   Guia de Programação" (capítulo de comunicação serial Modbus RTU),
+#   mas podem variar conforme:
+#     - versão de firmware do inversor;
+#     - variante do produto (CFW500, CFW500 HVAC, CFW500 IP66 etc.);
+#     - parâmetros P0680-P0689 (que às vezes são remapeados pelo
+#       comissionamento da máquina).
+#   Antes de confiar nos valores, valide com a HMI do próprio inversor
+#   (compare o valor lido via Modbus com o valor mostrado no display,
+#   parâmetro por parâmetro) ou com o manual do seu modelo/firmware.
+#   Ajuste os campos "address" e "scale" abaixo se necessário - o
+#   restante do gateway (modbus_client.py, gateway.py) não precisa
+#   mudar, ele só lê este arquivo.
+#
+# scale: valor lido é dividido por este fator para chegar na unidade
+#   de engenharia (ex.: corrente lida "1234" com scale 10 -> 123.4 A).
+# signed: true se o registrador pode representar valores negativos
+#   (complemento de dois em 16 bits).
+
+function_code: 3          # 03 = Read Holding Registers (leitura via Modbus RTU padrão CFW-500)
+
+fields:
+  speed_rpm:
+    address: 2               # P0002 - Velocidade do motor (rpm)
+    scale: 1
+    signed: true
+
+  current_A:
+    address: 3               # P0003 - Corrente do motor (A)
+    scale: 10
+    signed: false
+
+  dc_link_V:
+    address: 4                # P0004 - Tensão do link CC (V)
+    scale: 1
+    signed: false
+
+  frequency_Hz:
+    address: 5              # P0005 - Frequência do motor (Hz)
+    scale: 100
+    signed: true
+
+  voltage_V:
+    address: 6               # P0006 - Tensão de saída do motor (V)
+    scale: 1
+    signed: false
+
+  torque_pct:
+    address: 9                # P0009 - Torque do motor (%)
+    scale: 10
+    signed: true
+
+  status_word:
+    address: 680           # P0680 - Palavra de status (bit0=Pronto, bit1=Rodando,
+                              # bit2=Geral/Falha, bit3=ASCII/Subtensão, ... ver manual)
+    scale: 1
+    signed: false
+
+  fault_code:
+    address: 682             # P0682 - Código da última falha (0 = sem falha)
+    scale: 1
+    signed: false
+
+# Bits conhecidos da status_word (P0680) - confirme no manual do seu firmware.
+status_word_bits:
+  0: ready              # pronto
+  1: running            # rodando
+  2: general_fault      # falha geral
+  3: undervoltage       # subtensão
+  4: forward            # sentido de giro horário
+  5: reverse            # sentido de giro anti-horário
+  6: jog
+  7: alarm              # alarme ativo (não desarma)
+
+# Tabela (parcial, não exaustiva) de códigos de falha WEG mais comuns.
+# fault_code que não estiver aqui é exibido no dashboard como "Falha Fxxxx"
+# genérica - complemente esta lista com o manual do seu modelo.
+fault_codes:
+  22: "F0022 - Sobrecorrente na saída"
+  23: "F0023 - Curto-circuito na saída"
+  30: "F0030 - Sobretensão no link CC"
+  31: "F0031 - Subtensão no link CC"
+  33: "F0033 - Falha no aterramento"
+  40: "F0040 - Sobretemperatura no dissipador (IGBT)"
+  70: "F0070 - Sobrecarga no motor"
+  72: "F0072 - Sobretemperatura no motor"
+  74: "F0074 - Falha externa (entrada digital)"
+  76: "F0076 - Erro de contato do relé de saída"
+  100: "F0100 - Erro de comunicação serial (timeout)"
