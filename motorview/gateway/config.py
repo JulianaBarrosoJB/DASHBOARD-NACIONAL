@@ -55,16 +55,17 @@ def _validate(cfg: dict) -> None:
     if not cfg.get("inverters"):
         raise ConfigError("config.yaml precisa listar ao menos um inversor em 'inverters'.")
     mqtt = cfg.get("mqtt", {})
-    if not mqtt.get("host") or "xxxxxxxx" in str(mqtt.get("host", "")):
-        raise ConfigError(
-            "Configure o host do broker MQTT em config.yaml (mqtt.host) "
-            "ou na variável de ambiente MOTORVIEW_MQTT_HOST."
-        )
-    if not mqtt.get("password"):
-        raise ConfigError(
-            "Configure a senha do MQTT em config.yaml (mqtt.password) ou, de preferência, "
-            "na variável de ambiente MOTORVIEW_MQTT_PASSWORD (arquivo .env)."
-        )
+    if mqtt.get("enabled", True):
+        if not mqtt.get("host") or "xxxxxxxx" in str(mqtt.get("host", "")):
+            raise ConfigError(
+                "Configure o host do broker MQTT em config.yaml (mqtt.host) "
+                "ou na variável de ambiente MOTORVIEW_MQTT_HOST."
+            )
+        if not mqtt.get("password"):
+            raise ConfigError(
+                "Configure a senha do MQTT em config.yaml (mqtt.password) ou, de preferência, "
+                "na variável de ambiente MOTORVIEW_MQTT_PASSWORD (arquivo .env)."
+            )
 
 
 def register_map_path(inverter_cfg: dict) -> Path:
