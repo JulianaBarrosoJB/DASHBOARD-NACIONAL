@@ -4,8 +4,8 @@
 serial:
   port: /dev/ttyUSB0       # Windows (teste local): "COM3" etc. No Raspberry Pi normalmente
                             # /dev/ttyUSB0 (conversor USB-RS485) ou /dev/ttyAMA0 (GPIO UART).
-  baudrate: 19200           # deve bater com o parâmetro Pxxx de baud rate configurado no inversor
-  parity: "E"                # "N" (nenhuma), "E" (par) ou "O" (ímpar) - padrão de fábrica WEG = par
+  baudrate: 19200           # CFW500: P0310=1 (padrão). Para o teste com AS320P-B use 9600.
+  parity: "E"                # CFW500: P0311=1 (8E1 padrão). Para o teste com AS320P-B use "N".
   stopbits: 1
   bytesize: 8
   timeout: 1.0                 # segundos, timeout de resposta por leitura
@@ -25,7 +25,7 @@ inverters:
     slave_id: 2
     register_map: registers_weg_cfw500.yaml
   # adicione um bloco "- id: ..." por inversor no barramento RS-485
-  # (cada um com seu próprio slave_id, configurado no parâmetro P0312 do CFW-500)
+  # (cada um com seu próprio slave_id, configurado em P0308 no CFW500)
 
 mqtt:
   host: xxxxxxxx.s1.eu.hivemq.cloud   # troque pelo host do seu cluster HiveMQ Cloud
