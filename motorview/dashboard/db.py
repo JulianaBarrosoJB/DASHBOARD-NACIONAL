@@ -299,16 +299,55 @@ def df_connectivity(limit: int = 40) -> pd.DataFrame:
     return df
 
 
+def latest_gateway_status(site_id: str) -> dict:
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT ts, status FROM connectivity_log WHERE site_id = ? ORDER BY ts DESC LIMIT 1",
+        (site_id,),
+    ).fetchone()
+    conn.close()
+    if not row:
+        return {"status": "desconhecido", "ts": None}
+    return {"status": row["status"], "ts": row["ts"]}
+
+
+# bit -> nome, igual ao status_word_bits do gateway/registers_weg_cfw500.yaml
+# (mantido aqui em Python pra não precisar o dashboard ler o YAML do gateway).
+STATUS_WORD_BITS = {
+    1: "run_command", 4: "quick_stop", 5: "second_ramp", 6: "config_state",
+    7: "alarm", 8: "running", 9: "enabled", 10: "forward", 11: "jog",
+    12: "remote", 13: "undervoltage", 14: "automatic_pid", 15: "general_fault",
+}
+
+
+def decode_status_word(word) -> dict:
+    if word is None or pd.isna(word):
+        return {}
+    word = int(word)
+    return {name: bool(word & (1 << bit)) for bit, name in STATUS_WORD_BITS.items()}
+
+
 def kpis_now() -> dict:
     latest = df_latest_reading()
     if latest.empty:
-        return {"inversores": 0, "online": 0, "falhas_ativas": 0, "corrente_total": 0.0}
+        return {
+            "inversores": 0, "online": 0, "rodando": 0, "falhas_ativas": 0,
+            "corrente_total": 0.0, "gateway_status": "desconhecido",
+        }
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=2)
     online = latest[(latest["ts"] >= cutoff) & (latest["comm_error"] == 0)]
     falhas_ativas = int((latest["fault_code"].fillna(0) > 0).sum())
+    rodando = sum(1 for w in online["status_word"] if decode_status_word(w).get("running"))
+
+    inv_df = df_inverters()
+    site_id = inv_df["site_id"].iloc[0] if not inv_df.empty else None
+    gw = latest_gateway_status(site_id) if site_id else {"status": "desconhecido"}
+
     return {
         "inversores": len(latest),
         "online": len(online),
+        "rodando": rodando,
         "falhas_ativas": falhas_ativas,
         "corrente_total": round(float(online["current_A"].fillna(0).sum()), 1),
+        "gateway_status": gw["status"],
     }

@@ -2,9 +2,12 @@
 
 App [Streamlit](https://streamlit.io) que assina o MQTT publicado pelo
 [gateway](../gateway/README.md) (Raspberry Pi + Modbus RTU) e mostra em tempo
-real: corrente por inversor, frequência/rotação/torque, registro de falhas e
-histórico com exportação em CSV. Segue a mesma linha visual do
-[ProdView](../../prodview/README.md), que serviu de referência.
+real: status por motor, corrente (com pico via `current_fast`), falhas
+(evento atual + últimas 3 falhas internas do CFW-500) e histórico com
+exportação em CSV. Segue a mesma linha visual do
+[ProdView](../../prodview/README.md) - menu em cards no topo, sem sidebar,
+sem `st.tabs` padrão: **Visão Geral, Motores, Corrente, Falhas, Histórico,
+Conectividade, Relatórios**.
 
 ## Rodar localmente
 
@@ -17,18 +20,77 @@ streamlit run app.py
 
 Abre em `http://localhost:8501`. Assim que o gateway começar a publicar,
 os dados aparecem automaticamente (o app assina o MQTT em background).
+Sem os Secrets de `[auth]` preenchidos, o app roda em **modo aberto** (sem
+exigir login) - é assim que dá pra desenvolver localmente sem depender do
+Azure AD; ver seção de segurança abaixo antes de publicar de verdade.
 
-## Publicar online (Streamlit Community Cloud)
+## Contrato de tópicos MQTT (real, validado em campo)
 
-1. Suba o repositório pro GitHub (mesmo passo do ProdView, veja
-   [prodview/README.md](../../prodview/README.md#publicar-online-link-para-abrir-no-celular)).
-2. Em [share.streamlit.io](https://share.streamlit.io), **New app**, escolha
-   o repositório/branch e em **"Main file path"** informe `motorview/dashboard/app.py`.
-3. Antes (ou depois) de dar Deploy, abra **Settings -> Secrets** do app e
-   cole o conteúdo de [`.streamlit/secrets.example.toml`](.streamlit/secrets.example.toml)
-   já com host/usuário/senha reais do broker MQTT (o mesmo broker para o
-   qual o gateway do Raspberry Pi publica).
-4. Deploy. Em 1-2 minutos você tem um link público - abre no celular também.
+O dashboard usa **sempre** a credencial *subscribe only* do broker
+(`motorview-ingest`) - nunca a credencial de publicação do gateway
+(`motorview-gateway-planta1`). Tópicos assinados (filtro
+`motorview/<site_id>/#`):
+
+| Tópico | Frequência |
+|---|---|
+| `motorview/<site>/gateway/status` | on-change (Last Will) |
+| `motorview/<site>/<inv>/telemetry` | ~2s |
+| `motorview/<site>/<inv>/current_fast` | ~500ms (amostrado a ~100ms no gateway) |
+| `motorview/<site>/<inv>/fault` | on-change |
+
+Não existe um tópico `fault_history` separado: o histórico interno do
+CFW-500 (P0050/P0051-P0055, P0060, P0070) já viaja **embutido na própria
+`telemetry`**, nos campos `last_fault_code`, `last_fault_description`,
+`last_fault_current_A`, `last_fault_dc_link_V`, `last_fault_frequency_Hz`,
+`last_fault_igbt_temp_C`, `last_fault_status_word`, `second_fault_code`,
+`second_fault_description`, `third_fault_code`, `third_fault_description` -
+ver `db.py` (tabela `telemetry`) e a tela "Falhas" em `app.py`.
+
+Todos os timestamps chegam em **UTC com milissegundos** (o banco grava como
+recebido; a conversão pra `America/Sao_Paulo` é só na hora de exibir, em
+`app.py`).
+
+## Segurança - leia antes de publicar
+
+- **Nunca** hardcode credenciais em `app.py`/`config.py`/README - tudo vem
+  de `st.secrets` (deploy) ou `.env` local (nunca commitado, já no
+  `.gitignore`).
+- A credencial MQTT do dashboard deve ser a **subscribe only**
+  (`motorview-ingest`) - crie uma credencial separada da do gateway no
+  broker. A do gateway (`motorview-gateway-planta1`) nunca deve aparecer
+  aqui.
+- **Não deixe o app público sem autenticação.** Camadas suportadas pelo
+  código:
+  1. **Streamlit Community Cloud**: nas configurações do app, marque como
+     **privado** e restrinja quem pode abrir o link (ver
+     [documentação de app settings](https://docs.streamlit.io/deploy/streamlit-community-cloud/manage-your-app/app-settings)).
+  2. **Login Microsoft (Entra ID) dentro do próprio app** - preferível pra
+     controle corporativo de identidade. Usa a autenticação OIDC nativa do
+     Streamlit (`st.login`/`st.logout`/`st.user`, ver `auth.py`):
+     1. Crie um **App registration** no Azure/Entra, tipo *Web*, com
+        redirect URI `https://SEU_APP.streamlit.app/oauth2callback`.
+     2. Marque a Enterprise Application correspondente com
+        **"Assignment required = Yes"** e atribua só os usuários/grupos
+        que podem acessar.
+     3. Preencha em `secrets.toml` (ver `secrets.example.toml`):
+        ```toml
+        [auth]
+        redirect_uri = "https://SEU_APP.streamlit.app/oauth2callback"
+        cookie_secret = "SEGREDO_LONGO_ALEATORIO"
+
+        [auth.microsoft]
+        client_id = "..."
+        client_secret = "..."
+        server_metadata_url = "https://login.microsoftonline.com/SEU_TENANT_ID/v2.0/.well-known/openid-configuration"
+        ```
+     4. Defina `AUTHORIZED_EMAILS` (lista separada por vírgula) - 2ª camada
+        de allowlist dentro do próprio app: mesmo quem loga com sucesso no
+        Entra só entra se o e-mail estiver nessa lista.
+  3. **`MOTORVIEW_REQUIRE_AUTH = "true"`** - ative isso no deploy de
+     produção. Sem essa flag, se alguém esquecer de configurar `[auth]`
+     por engano, o app sobe em modo aberto (só com um aviso). Com a flag
+     ativa e `[auth]` ausente, o app **bloqueia tudo** (`st.stop()`) em vez
+     de abrir por acidente - fail-closed.
 
 ## Limitação importante (plano gratuito)
 
@@ -50,7 +112,8 @@ usado no ProdView):
 1. **Base persistente na nuvem**: trocar `get_conn()` em `db.py` por uma
    conexão Postgres (ex.: [Supabase](https://supabase.com) ou
    [Neon](https://neon.tech), ambos com free tier) - os dados sobrevivem a
-   qualquer hibernação/redeploy.
+   qualquer hibernação/redeploy. Recomendado especialmente por causa do
+   `current_fast` (~2 msg/s por inversor gera bastante linha por dia).
 2. **Worker de ingestão sempre ativo**: rodar `mqtt_ingest.py` como um
    processo separado e sempre ligado (um serviço pequeno em
    Render/Railway/VPS, ou até no próprio Raspberry Pi) gravando na mesma
@@ -60,14 +123,16 @@ usado no ProdView):
 
 ```
 dashboard/
-  app.py                       # UI Streamlit (abas: Visão Geral, Corrente em
-                                # Tempo Real, Falhas, Histórico)
+  app.py                       # UI Streamlit (menu em cards: Visão Geral,
+                                # Motores, Corrente, Falhas, Histórico,
+                                # Conectividade, Relatórios)
   db.py                        # camada de dados (SQLite agora -> Postgres depois)
   mqtt_ingest.py                # assinante MQTT em background, grava no banco
-  config.py                     # lê credenciais MQTT de st.secrets / .env
+  auth.py                       # login Microsoft (st.login) + allowlist
+  config.py                     # lê credenciais MQTT/auth de st.secrets / .env
   requirements.txt
   .streamlit/
     config.toml                 # tema (mesma paleta do ProdView)
-    secrets.example.toml         # modelo de credenciais MQTT
+    secrets.example.toml         # modelo (só placeholders) de MQTT + auth + allowlist
   data/motorview.db             # criado automaticamente na 1ª execução
 ```
