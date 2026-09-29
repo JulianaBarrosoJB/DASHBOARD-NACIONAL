@@ -13,6 +13,7 @@ serial:
 
 poll_interval_seconds: 2        # telemetria completa de todos os inversores
 comm_error_heartbeat_seconds: 60 # erro de comunicação: publica na mudança e depois só heartbeat
+offline_retry_seconds: 30        # slave offline: nova tentativa Modbus só a cada 30 s
 
 # Monitoramento de alta frequência para motores críticos.
 # A corrente bruta fica LOCAL no Raspberry a cada 100 ms.
