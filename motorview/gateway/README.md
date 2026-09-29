@@ -14,9 +14,9 @@ consumir em tempo real.
   `raspi-config` -> Interface Options -> Serial Port -> login shell: No,
   hardware: Yes).
 - Ligação RS-485: **A/D+** e **B/D-** do conversor nos bornes A e B do
-  inversor (P0312 = protocolo Modbus RTU, P0313 = endereço/slave ID,
-  P0314 = baud rate, P0315 = paridade - todos no menu de comunicação serial
-  do CFW-500). Todos os inversores no mesmo barramento compartilham A/B,
+  inversor. No CFW500: **P0308 = endereço/slave ID**, **P0310 = baud rate**,
+  **P0311 = formato dos bytes/paridade**, **P0312 = protocolo (2 = Modbus RTU)**,
+  **P0313 = ação em erro de comunicação** e **P0314 = watchdog serial**. Todos os inversores no mesmo barramento compartilham A/B,
   cada um com um `slave_id` diferente.
 - Resistor de terminação de 120 Ω nas duas pontas do barramento RS-485 se o
   cabo for longo (> ~15 m) ou houver muito ruído elétrico.
@@ -89,8 +89,9 @@ cp config.example.yaml config.yaml
 Depois (nos dois caminhos), edite `config.yaml`:
 
 - `serial.port`: `/dev/ttyUSB0` (conversor USB) ou `/dev/ttyAMA0` (GPIO).
-- `serial.baudrate` / `parity`: têm que bater com os parâmetros configurados
-  no inversor (P0314/P0315 no CFW-500).
+- `serial.baudrate` / `parity`: têm que bater com P0310/P0311 do CFW500.
+  No padrão de fábrica: 19200 bit/s, 8E1. No teste atual com o AS320P-B:
+  9600 bit/s, 8N1.
 - `inverters`: um item por inversor no barramento, com `slave_id` único.
 - `mqtt.host` / `mqtt.port`: dados do seu broker (veja seção 3).
 
