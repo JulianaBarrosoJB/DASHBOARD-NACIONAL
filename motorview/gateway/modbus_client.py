@@ -1,9 +1,8 @@
 """
 MotorView Gateway - leitura Modbus RTU dos inversores
 ========================================================
-Usa pymodbus para ler, via RS-485, os registradores mapeados em
-registers_weg_cfw500.yaml (ou outro mapa que você configure) e devolve
-um dicionário com valores já convertidos para unidade de engenharia.
+Leitura completa por mapa e leitura pontual de registradores críticos
+(corrente/falha), usando uma única conexão serial síncrona.
 """
 
 import logging
@@ -20,8 +19,6 @@ def _to_signed16(value: int) -> int:
 
 
 class RegisterMap:
-    """Carrega e representa um mapa de registradores (ex.: registers_weg_cfw500.yaml)."""
-
     def __init__(self, path: Path):
         with open(path, "r", encoding="utf-8") as fh:
             data = yaml.safe_load(fh)
@@ -31,7 +28,6 @@ class RegisterMap:
         self.fault_codes: dict = {int(k): v for k, v in data.get("fault_codes", {}).items()}
 
     def decode(self, raw_values: dict) -> dict:
-        """raw_values: {field_name: raw_int_16bit} -> valores já escalados."""
         out = {}
         for name, spec in self.fields.items():
             raw = raw_values.get(name)
@@ -53,16 +49,12 @@ class RegisterMap:
 
 
 class InverterReader:
-    """Lê um único inversor (um slave_id) num barramento RS-485 compartilhado."""
-
     def __init__(self, client: ModbusSerialClient, slave_id: int, register_map: RegisterMap):
         self.client = client
         self.slave_id = slave_id
         self.register_map = register_map
 
     def _read_block(self, address: int, count: int):
-        """Compatibilidade com pymodbus 3.x: versões recentes usam device_id;
-        versões anteriores usavam slave."""
         try:
             return self.client.read_holding_registers(
                 address=address, count=count, device_id=self.slave_id
@@ -72,13 +64,22 @@ class InverterReader:
                 address=address, count=count, slave=self.slave_id
             )
 
-    def read(self) -> dict | None:
-        """Lê os campos do mapa em blocos Modbus válidos (máx. 125 registradores).
+    def read_field(self, field_name: str):
+        """Lê apenas um registrador do mapa e devolve valor em unidade de engenharia."""
+        spec = self.register_map.fields.get(field_name)
+        if not spec:
+            raise KeyError(f"Campo não existe no mapa: {field_name}")
+        try:
+            result = self._read_block(int(spec["address"]), 1)
+        except Exception as exc:
+            log.warning("Falha ao ler %s do slave %s: %s", field_name, self.slave_id, exc)
+            return None
+        if result is None or result.isError() or not getattr(result, "registers", None):
+            log.warning("Resposta inválida ao ler %s do slave %s: %s", field_name, self.slave_id, result)
+            return None
+        return self.register_map.decode({field_name: result.registers[0]}).get(field_name)
 
-        O mapa do CFW500 possui parâmetros próximos de zero e outros na faixa
-        P0680; tentar ler tudo em uma única chamada ultrapassa o limite do
-        function code 03. Por isso os endereços são separados em blocos.
-        """
+    def read(self) -> dict | None:
         address_to_names: dict[int, list[str]] = {}
         for name, spec in self.register_map.fields.items():
             address_to_names.setdefault(int(spec["address"]), []).append(name)
@@ -91,7 +92,6 @@ class InverterReader:
         block_start = block_end = sorted_addresses[0]
 
         for address in sorted_addresses[1:]:
-            # Pode haver lacunas; o importante é não ultrapassar 125 registros.
             if address - block_start + 1 <= 125:
                 block_end = address
             else:
@@ -105,18 +105,12 @@ class InverterReader:
             count = hi - lo + 1
             try:
                 result = self._read_block(lo, count)
-            except Exception as exc:  # comunicação instável no barramento RS-485
-                log.warning(
-                    "Falha ao ler slave %s, bloco %s..%s: %s",
-                    self.slave_id, lo, hi, exc
-                )
+            except Exception as exc:
+                log.warning("Falha ao ler slave %s, bloco %s..%s: %s", self.slave_id, lo, hi, exc)
                 return None
 
             if result is None or result.isError():
-                log.warning(
-                    "Resposta Modbus inválida do slave %s, bloco %s..%s: %s",
-                    self.slave_id, lo, hi, result
-                )
+                log.warning("Resposta Modbus inválida do slave %s, bloco %s..%s: %s", self.slave_id, lo, hi, result)
                 return None
 
             for address in sorted_addresses:
@@ -159,5 +153,6 @@ def build_serial_client(serial_cfg: dict) -> ModbusSerialClient:
         parity=serial_cfg.get("parity", "E"),
         stopbits=serial_cfg.get("stopbits", 1),
         bytesize=serial_cfg.get("bytesize", 8),
-        timeout=serial_cfg.get("timeout", 1.0),
+        timeout=serial_cfg.get("timeout", 0.3),
+        retries=serial_cfg.get("retries", 0),
     )
