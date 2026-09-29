@@ -144,10 +144,12 @@ def main():
 
     full_interval = float(cfg.get("poll_interval_seconds", 2))
     comm_heartbeat = float(cfg.get("comm_error_heartbeat_seconds", 60))
+    offline_retry = float(cfg.get("offline_retry_seconds", 30))
 
     last_fault_code: dict[str, int | None] = {inv_id: None for inv_id in readers}
     last_comm_error: dict[str, bool | None] = {inv_id: None for inv_id in readers}
     last_comm_publish: dict[str, float] = {inv_id: 0.0 for inv_id in readers}
+    next_comm_retry: dict[str, float] = {inv_id: 0.0 for inv_id in readers}
 
     fast_windows: dict[str, list[dict]] = {inv_id: [] for inv_id in critical_ids}
     raw_buffer: list[dict] = []
@@ -274,6 +276,33 @@ def main():
         # 5) Telemetria completa.
         if now_mono >= next_full:
             for inv_id, reader in readers.items():
+                now_try = time.monotonic()
+
+                # Se o slave já foi confirmado offline, não deixe ele bloquear a
+                # mesma serial a cada ciclo de 2 s. Tenta novamente apenas no
+                # intervalo configurado (ex.: 30 s). O estado de erro continua
+                # sendo publicado por heartbeat sem novas tentativas Modbus.
+                if last_comm_error[inv_id] is True and now_try < next_comm_retry[inv_id]:
+                    if now_try - last_comm_publish[inv_id] >= comm_heartbeat:
+                        ts = now_iso()
+                        payload = {
+                            "ts": ts,
+                            "inverter_id": inv_id,
+                            "name": inv_names[inv_id],
+                            "comm_error": True,
+                        }
+                        topic = (
+                            mqtt_pub.topic_telemetry(inv_id)
+                            if mqtt_pub else f"local/{site_id}/{inv_id}/telemetry"
+                        )
+                        row_id = store.record_telemetry(inv_id, topic, payload)
+                        if mqtt_pub and mqtt_pub.publish(topic, payload, retain=True):
+                            store.mark_sent("telemetry_log", row_id)
+                        elif not mqtt_pub:
+                            store.mark_sent("telemetry_log", row_id)
+                        last_comm_publish[inv_id] = now_try
+                    continue
+
                 values = reader.read()
                 ts = now_iso()
 
@@ -284,6 +313,7 @@ def main():
                         or now_err - last_comm_publish[inv_id] >= comm_heartbeat
                     )
                     last_comm_error[inv_id] = True
+                    next_comm_retry[inv_id] = now_err + offline_retry
                     if should_publish:
                         payload = {
                             "ts": ts,
@@ -301,11 +331,15 @@ def main():
                         elif not mqtt_pub:
                             store.mark_sent("telemetry_log", row_id)
                         last_comm_publish[inv_id] = now_err
-                    log.warning("%s sem resposta Modbus", inv_id)
+                    log.warning(
+                        "%s sem resposta Modbus; nova tentativa em %.0f s",
+                        inv_id, offline_retry
+                    )
                     continue
 
                 recovered = last_comm_error[inv_id] is True
                 last_comm_error[inv_id] = False
+                next_comm_retry[inv_id] = 0.0
 
                 payload = {
                     "ts": ts,
