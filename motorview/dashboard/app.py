@@ -245,6 +245,35 @@ with tab_faults:
                 unsafe_allow_html=True,
             )
 
+    st.markdown("#### Últimas falhas registradas nos inversores")
+    latest_faults = db.df_latest_reading()
+    if latest_faults.empty:
+        st.info("Nenhuma leitura disponível para consultar o histórico interno dos inversores.")
+    else:
+        for _, row in latest_faults.iterrows():
+            last_code = row.get("last_fault_code")
+            if pd.isna(last_code) or int(last_code or 0) == 0:
+                continue
+            with st.container(border=True):
+                st.markdown(f"**{row['name']}** · última falha: **F{int(last_code):04d}**")
+                if row.get("last_fault_description"):
+                    st.caption(str(row.get("last_fault_description")))
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Corrente na falha", f"{row.get('last_fault_current_A'):.1f} A" if pd.notna(row.get("last_fault_current_A")) else "-")
+                c2.metric("Barramento CC", f"{row.get('last_fault_dc_link_V'):.0f} V" if pd.notna(row.get("last_fault_dc_link_V")) else "-")
+                c3.metric("Frequência", f"{row.get('last_fault_frequency_Hz'):.1f} Hz" if pd.notna(row.get("last_fault_frequency_Hz")) else "-")
+                c4.metric("Temp. IGBT", f"{row.get('last_fault_igbt_temp_C'):.0f} °C" if pd.notna(row.get("last_fault_igbt_temp_C")) else "-")
+
+                history_parts = []
+                second = row.get("second_fault_code")
+                third = row.get("third_fault_code")
+                if pd.notna(second) and int(second or 0) > 0:
+                    history_parts.append(f"2ª: F{int(second):04d}")
+                if pd.notna(third) and int(third or 0) > 0:
+                    history_parts.append(f"3ª: F{int(third):04d}")
+                if history_parts:
+                    st.caption(" · ".join(history_parts))
+
     st.markdown("#### Histórico de falhas")
     if faults.empty:
         st.info("Nenhuma falha registrada no período selecionado.")
