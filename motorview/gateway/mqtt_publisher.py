@@ -1,24 +1,25 @@
 """
-MotorView Gateway - cliente MQTT (publicação na nuvem)
-==========================================================
-Wrapper fino sobre paho-mqtt: conecta com TLS (HiveMQ Cloud ou qualquer
-broker compatível), mantém reconexão automática, publica telemetria/
-falhas em JSON e usa Last Will and Testament para que o dashboard saiba
-na hora quando este gateway cai (fica "offline").
-
-Tópicos (troque "site_id" e "inverter_id" pelos valores de config.yaml):
-  motorview/<site_id>/<inverter_id>/telemetry   (retained)  - última leitura
-  motorview/<site_id>/<inverter_id>/fault       (não retido) - evento de falha
-  motorview/<site_id>/<inverter_id>/status      (retained)  - "online"/"offline"
+MotorView Gateway - publicação MQTT segura
+==========================================
+Tópicos:
+  motorview/<site>/<inv>/telemetry       telemetria completa (retained)
+  motorview/<site>/<inv>/current_fast    resumo rápido de corrente (não retido)
+  motorview/<site>/<inv>/fault           evento de falha (não retido)
+  motorview/<site>/gateway/status        online/offline
 """
 
 import json
 import logging
 import ssl
+from datetime import datetime, timezone
 
 import paho.mqtt.client as mqtt
 
 log = logging.getLogger("motorview.mqtt")
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
 class MqttPublisher:
@@ -27,13 +28,26 @@ class MqttPublisher:
         self.qos = mqtt_cfg.get("qos", 1)
         self.connected = False
 
-        self.client = mqtt.Client(client_id=mqtt_cfg.get("client_id", "motorview-gateway"), clean_session=True)
+        self.client = mqtt.Client(
+            client_id=mqtt_cfg.get("client_id", "motorview-gateway"),
+            clean_session=True,
+        )
         self.client.username_pw_set(mqtt_cfg["username"], mqtt_cfg["password"])
         if mqtt_cfg.get("use_tls", True):
-            self.client.tls_set(cert_reqs=ssl.CERT_REQUIRED, tls_version=ssl.PROTOCOL_TLS_CLIENT)
+            self.client.tls_set(
+                cert_reqs=ssl.CERT_REQUIRED,
+                tls_version=ssl.PROTOCOL_TLS_CLIENT,
+            )
 
         status_topic = f"motorview/{site_id}/gateway/status"
-        self.client.will_set(status_topic, payload=json.dumps({"status": "offline"}), qos=1, retain=True)
+        # O timestamp exato da queda não existe no dispositivo quando o Last Will
+        # é emitido pelo broker. O ingestor grava o horário de recebimento.
+        self.client.will_set(
+            status_topic,
+            payload=json.dumps({"status": "offline", "ts": None, "source": "lwt"}),
+            qos=1,
+            retain=True,
+        )
 
         self.client.on_connect = self._on_connect
         self.client.on_disconnect = self._on_disconnect
@@ -48,7 +62,7 @@ class MqttPublisher:
             log.info("Conectado ao broker MQTT %s:%s", self._host, self._port)
             client.publish(
                 f"motorview/{self.site_id}/gateway/status",
-                json.dumps({"status": "online"}),
+                json.dumps({"status": "online", "ts": _now_iso(), "source": "gateway"}),
                 qos=1,
                 retain=True,
             )
@@ -71,14 +85,16 @@ class MqttPublisher:
     def topic_telemetry(self, inverter_id: str) -> str:
         return f"motorview/{self.site_id}/{inverter_id}/telemetry"
 
+    def topic_fast_current(self, inverter_id: str) -> str:
+        return f"motorview/{self.site_id}/{inverter_id}/current_fast"
+
     def topic_fault(self, inverter_id: str) -> str:
         return f"motorview/{self.site_id}/{inverter_id}/fault"
 
     def publish(self, topic: str, payload: dict, retain: bool = False) -> bool:
-        """Retorna True se a publicação foi aceita pelo cliente local (não garante
-        entrega - para isso, veja o retorno de publish() e o mecanismo de outbox
-        em storage.py, que reenvia o que não foi confirmado)."""
         if not self.connected:
             return False
-        info = self.client.publish(topic, json.dumps(payload), qos=self.qos, retain=retain)
+        info = self.client.publish(
+            topic, json.dumps(payload), qos=self.qos, retain=retain
+        )
         return info.rc == mqtt.MQTT_ERR_SUCCESS
