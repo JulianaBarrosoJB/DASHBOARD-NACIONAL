@@ -182,3 +182,52 @@ valores comparando com a HMI do inversor antes de usar em produção** -
 podem variar por firmware/variante. Se usar outra marca/modelo, crie um
 novo arquivo de mapa (mesmo formato) e aponte `register_map:` para ele em
 `config.yaml`.
+
+
+## Monitoramento rápido de corrente e falhas
+
+Para motores críticos, o gateway pode operar em duas cadências ao mesmo tempo:
+
+- telemetria completa (padrão: 2 s);
+- corrente crítica lida localmente em alta frequência (padrão: 100 ms);
+- resumo MQTT da corrente rápida (padrão: 500 ms), contendo último valor, mínimo, máximo, média e quantidade de amostras;
+- verificação rápida da falha atual (padrão: 250 ms);
+- ao detectar mudança de falha, o gateway força imediatamente uma leitura completa para capturar P0049/P0050/P0051/P0052/P0053/P0054/P0055/P0060/P0070;
+- timestamps UTC com precisão de milissegundos.
+
+Exemplo:
+
+```yaml
+poll_interval_seconds: 2
+comm_error_heartbeat_seconds: 60
+
+fast_monitoring:
+  enabled: true
+  inverters:
+    - inv01
+  current_sample_interval_ms: 100
+  current_publish_interval_ms: 500
+  fault_poll_interval_ms: 250
+  raw_flush_interval_ms: 1000
+  raw_retention_days: 7
+```
+
+As amostras de 100 ms são gravadas em `current_sample` no SQLite local e
+não são enviadas individualmente ao HiveMQ. O tópico
+`motorview/<site>/<inverter>/current_fast` recebe somente os agregados de
+500 ms. Isso preserva picos locais sem consumir desnecessariamente o tráfego
+do broker.
+
+Para evitar que um equipamento ausente bloqueie o barramento por vários
+segundos, recomenda-se no cliente serial:
+
+```yaml
+serial:
+  timeout: 0.3
+  retries: 0
+```
+
+A captura de 100 ms é best-effort sobre Modbus RTU: uma requisição lenta,
+um slave ausente ou outra transação no mesmo RS-485 pode introduzir lacunas.
+Para transientes mais rápidos que a janela de polling, use também os snapshots
+internos de falha do próprio CFW500.
