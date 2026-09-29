@@ -136,6 +136,19 @@ class InverterReader:
         if fault_code is not None:
             decoded["fault_description"] = self.register_map.fault_description(fault_code)
 
+        for field, description_field in (
+            ("last_fault_code", "last_fault_description"),
+            ("second_fault_code", "second_fault_description"),
+            ("third_fault_code", "third_fault_description"),
+        ):
+            code = decoded.get(field)
+            if code is not None:
+                decoded[description_field] = self.register_map.fault_description(code)
+
+        last_fault_status = decoded.get("last_fault_status_word")
+        if last_fault_status is not None:
+            decoded["last_fault_status_bits"] = self.register_map.decode_status_word(last_fault_status)
+
         return decoded
 
 
