@@ -5,7 +5,7 @@ ENDTECH
 
 Exibe telemetria dos inversores (corrente, tensão, frequência, rpm,
 torque, falhas e corrente rápida) persistida pelo worker de ingestão no
-PostgreSQL/Neon. O dashboard é somente leitura e não assina MQTT.
+PostgreSQL/Neon. Em emergência, um ingest MQTT de contingência pode ser ativado por Secrets.
 
 Segue a MESMA linguagem visual do ProdView (prodview/app.py) - mesma
 paleta, mesmos helpers (icon/style_fig/stat_card), mesmo padrão de menu
@@ -28,6 +28,7 @@ import auth
 import config
 import db
 import report_pdf
+from cloud_failover import CloudFailoverIngest
 
 LOCAL_TZ = ZoneInfo("America/Sao_Paulo")
 
@@ -265,9 +266,21 @@ auth.require_login()
 
 
 # ---------------------------------------------------------------------
-# Setup: dashboard read-only sobre PostgreSQL/Neon
+# Setup: leitura PostgreSQL/Neon + ingest cloud opcional de contingência.
+# O failover fica completamente inativo sem MOTORVIEW_FAILOVER_ENABLED=true.
 # ---------------------------------------------------------------------
 
+@st.cache_resource
+def start_cloud_failover():
+    cfg = config.failover_config()
+    if not cfg:
+        return None
+    worker = CloudFailoverIngest(cfg)
+    worker.start()
+    return worker
+
+
+failover_worker = start_cloud_failover()
 data_status = db.database_status()
 
 st.session_state.setdefault("page", "overview")
