@@ -372,6 +372,13 @@ def val_or_dash(row, col: str, fmt: str) -> str:
     return fmt.format(v)
 
 
+def empty_state(text: str = "Sem dados no momento."):
+    """Estado vazio discreto (texto cinza) no lugar de um banner de alerta -
+    mantém a tela limpa mesmo sem dados ainda."""
+    st.markdown(f"<div style='color:{MUTED};font-size:13px;padding:6px 0;'>— {text}</div>",
+                 unsafe_allow_html=True)
+
+
 def latest_current_fast(inverter_id: str) -> dict | None:
     """Última janela de current_fast desse motor (pra mostrar o pico
     'current_max_A' no card - usa só db.df_fast_current_recent(), que já
@@ -574,8 +581,7 @@ if page == "overview":
     st.markdown(f'<div class="card-title" style="font-size:15px;">{icon("dashboard")} Status por motor</div>',
                  unsafe_allow_html=True)
     if latest.empty:
-        st.info("Nenhuma leitura recebida ainda. Verifique se o gateway está publicando no MQTT.",
-                 icon=":material/info:")
+        empty_state("Aguardando dados.")
     else:
         cols = st.columns(3)
         for i, (_, row) in enumerate(latest.iterrows()):
@@ -607,7 +613,7 @@ if page == "overview":
 elif page == "motors":
     inv_df = db.df_inverters()
     if inv_df.empty:
-        st.info("Nenhum motor cadastrado ainda - aguardando o gateway publicar telemetria.", icon=":material/info:")
+        empty_state("Nenhum motor cadastrado ainda - aguardando o gateway publicar telemetria.")
     else:
         inv_id = st.selectbox(
             "Motor", options=inv_df["id"].tolist(),
@@ -616,7 +622,7 @@ elif page == "motors":
         latest = db.df_latest_reading()
         row = latest[latest["inverter_id"] == inv_id]
         if row.empty:
-            st.info("Sem leituras para esse motor ainda.", icon=":material/info:")
+            empty_state("Sem leituras para esse motor ainda.")
         else:
             row = row.iloc[0]
             label, color, mi, dashed = motor_status(row)
@@ -708,18 +714,13 @@ elif page == "current":
                                            name=f"{name} · pico", line=dict(color=color, width=1.5, dash="dot")))
             fig.update_layout(yaxis_title="Corrente (A)")
             st.plotly_chart(style_fig(fig, height=420), width="stretch", key=f"live_fast_{range_minutes}")
-            st.caption("Linha contínua = média da janela MQTT (`current_avg_A`); pontilhada = "
-                        "maior pico local capturado (`current_max_A`).")
+            st.caption("Linha contínua = média da janela; pontilhada = maior pico capturado.")
         else:
-            st.info(
-                "Ainda sem dados de `current_fast` pra esses motores no período - mostrando "
-                "`telemetry` padrão (~2s) como alternativa.", icon=":material/info:",
-            )
             slow = db.df_telemetry_recent(minutes=range_minutes)
             if not slow.empty and selected_ids:
                 slow = slow[slow["inverter_id"].isin(selected_ids)]
             if slow.empty:
-                st.info("Sem dados de corrente no período selecionado.", icon=":material/info:")
+                empty_state("Sem dados de corrente no período selecionado.")
                 return
             slow = slow.copy()
             slow["ts_local"] = series_to_local(slow["ts"])
@@ -745,7 +746,7 @@ elif page == "current":
     trend_inv_id = None if trend_motor == "(soma da frota)" else trend_motor
     trend_df = db.df_telemetry_recent(minutes=trend_minutes, inverter_id=trend_inv_id)
     if trend_df.empty:
-        st.info("Sem dados suficientes para o período selecionado.", icon=":material/info:")
+        empty_state("Sem dados suficientes para o período selecionado.")
     else:
         trend_df = trend_df.copy()
         trend_df["ts_local"] = series_to_local(trend_df["ts"])
@@ -767,7 +768,7 @@ elif page == "faults":
     st.markdown(f'<div class="card-title" style="font-size:15px;">{icon("report_problem")} Falha atual por motor</div>',
                  unsafe_allow_html=True)
     if latest.empty:
-        st.info("Sem leituras ainda.", icon=":material/info:")
+        empty_state("Sem leituras ainda.")
     else:
         active_faults = latest[latest["fault_code"].fillna(0) > 0]
         if not active_faults.empty:
@@ -801,7 +802,7 @@ elif page == "faults":
     st.markdown(f'<div class="card-title" style="font-size:15px;">{icon("history_toggle_off")} Últimas falhas internas do CFW-500 (P0050/P0060/P0070)</div>',
                  unsafe_allow_html=True)
     if latest.empty:
-        st.info("Nenhum motor cadastrado ainda.", icon=":material/info:")
+        empty_state("Nenhum motor cadastrado ainda.")
     else:
         inv_df = db.df_inverters()
         inv_id = st.selectbox(
@@ -810,7 +811,7 @@ elif page == "faults":
         )
         row = latest[latest["inverter_id"] == inv_id]
         if row.empty:
-            st.info("Sem leituras para esse motor ainda.", icon=":material/info:")
+            empty_state("Sem leituras para esse motor ainda.")
         else:
             row = row.iloc[0]
             last_code = row.get("last_fault_code")
@@ -818,7 +819,7 @@ elif page == "faults":
             third = row.get("third_fault_code")
 
             if pd.isna(last_code) or int(last_code or 0) == 0:
-                st.info("Nenhuma falha registrada no histórico interno desse motor.", icon=":material/info:")
+                empty_state("Nenhuma falha registrada no histórico interno desse motor.")
             else:
                 rank_cols = st.columns(3)
                 with rank_cols[0]:
@@ -865,7 +866,7 @@ elif page == "faults":
     only_active = st.checkbox("Só falhas ativas agora", value=False)
     faults = db.df_faults(days=days, only_active=only_active)
     if faults.empty:
-        st.info("Nenhum evento de falha registrado no período.", icon=":material/info:")
+        empty_state("Nenhum evento de falha registrado no período.")
     else:
         show = faults[["ts", "name", "fault_code", "fault_description", "active"]].copy()
         show["ts"] = show["ts"].apply(fmt_ts)
@@ -908,7 +909,7 @@ elif page == "history":
         if not faults.empty:
             faults = faults[(faults["ts"].dt.date >= date_start) & (faults["ts"].dt.date <= date_end)]
         if faults.empty:
-            st.info("Nenhuma falha no período/filtro selecionado.", icon=":material/info:")
+            empty_state("Nenhuma falha no período/filtro selecionado.")
         else:
             show = faults[["ts", "name", "fault_code", "fault_description", "active"]].copy()
             show["ts"] = show["ts"].apply(fmt_ts)
@@ -921,8 +922,7 @@ elif page == "history":
         if not source.empty:
             source = source[(source["ts"].dt.date >= date_start) & (source["ts"].dt.date <= date_end)]
         if source.empty or variable not in source.columns:
-            st.info("Sem dados para esse filtro. 'Pico de corrente' depende do gateway publicar `current_fast`.",
-                     icon=":material/info:")
+            empty_state("Sem dados para esse filtro.")
         else:
             source = source.copy()
             source["ts_local"] = series_to_local(source["ts"])
@@ -974,7 +974,7 @@ elif page == "connectivity":
                  unsafe_allow_html=True)
     latest = db.df_latest_reading()
     if latest.empty:
-        st.info("Nenhum motor cadastrado ainda.", icon=":material/info:")
+        empty_state("Nenhum motor cadastrado ainda.")
     else:
         for _, row in latest.iterrows():
             label, color, mi, dashed = motor_status(row)
@@ -990,7 +990,7 @@ elif page == "connectivity":
                  unsafe_allow_html=True)
     conn = db.df_connectivity(limit=50)
     if conn.empty:
-        st.info("Sem eventos de conectividade registrados ainda.", icon=":material/info:")
+        empty_state("Sem eventos de conectividade registrados ainda.")
     else:
         show = conn[["ts", "site_id", "status"]].copy()
         show["ts"] = show["ts"].apply(fmt_ts)
@@ -1007,7 +1007,7 @@ elif page == "reports":
     days = st.slider("Período (dias)", 1, 90, 7, key="report_days")
     telem = db.df_telemetry_recent(minutes=days * 24 * 60)
     if telem.empty:
-        st.info("Sem dados suficientes no período para gerar o relatório.", icon=":material/info:")
+        empty_state("Sem dados suficientes no período para gerar o relatório.")
     else:
         agg = telem.groupby("name").agg(
             corrente_media_A=("current_A", "mean"),
