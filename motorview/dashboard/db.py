@@ -97,16 +97,11 @@ def init_db():
 
 
 def database_status() -> dict:
-    """Estado do Neon + idade do dado operacional mais recente."""
+    """Estado do Neon + idade da telemetria mais recente."""
     try:
-        df = _query("""
-            SELECT GREATEST(
-                COALESCE((SELECT MAX(ts) FROM motorview.telemetry), TIMESTAMPTZ '1970-01-01'),
-                COALESCE((SELECT MAX(ts) FROM motorview.current_fast), TIMESTAMPTZ '1970-01-01')
-            ) AS latest_ts
-        """)
+        df = _query("SELECT MAX(ts) AS latest_ts FROM motorview.telemetry")
         latest = None if df.empty else df.iloc[0]["latest_ts"]
-        if pd.isna(latest) or pd.Timestamp(latest).year <= 1970:
+        if pd.isna(latest):
             latest = None
         fresh = False
         if latest is not None:
