@@ -451,13 +451,20 @@ with hcol_user:
             unsafe_allow_html=True,
         )
 
-with hcol3:
+@st.fragment(run_every="1s")
+def live_header_clock():
+    """Relógio do cabeçalho atualizado a cada segundo sem rerodar a página inteira."""
+    now = datetime.now(LOCAL_TZ)
     st.markdown(
         f"""<div style="text-align:right;padding-top:10px;font-size:12.5px;color:{MUTED};">
-        {icon('schedule', 14)} {datetime.now(LOCAL_TZ).strftime('%d/%m/%Y')}<br>
-        <b style="color:{TEXT};">{datetime.now(LOCAL_TZ).strftime('%H:%M:%S')}</b></div>""",
+        {icon('schedule', 14)} {now.strftime('%d/%m/%Y')}<br>
+        <b style="color:{TEXT};">{now.strftime('%H:%M:%S')}</b></div>""",
         unsafe_allow_html=True,
     )
+
+
+with hcol3:
+    live_header_clock()
 
 if not data_status["connected"]:
     st.error(
