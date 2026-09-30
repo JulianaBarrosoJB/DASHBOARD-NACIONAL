@@ -15,6 +15,38 @@ import config
 _pool = None
 _pool_lock = threading.Lock()
 
+# Identificadores técnicos permanecem estáveis no banco para preservar todo
+# o histórico. Estes nomes são apenas a apresentação amigável ao cliente.
+INVERTER_DISPLAY_NAMES = {
+    "inv01": "MOTOR 42",
+    "inv02": "MOTOR 44",
+}
+SITE_DISPLAY_NAMES = {
+    "planta1": "SUAPE",
+}
+
+
+def site_display_name(site_id) -> str:
+    if site_id is None or pd.isna(site_id):
+        return "—"
+    return SITE_DISPLAY_NAMES.get(str(site_id), str(site_id))
+
+
+def _clientize(df: pd.DataFrame) -> pd.DataFrame:
+    """Aplica nomes comerciais sem alterar as chaves internas."""
+    if df.empty:
+        return df
+    df = df.copy()
+    if "inverter_id" in df.columns:
+        mapped = df["inverter_id"].astype(str).map(INVERTER_DISPLAY_NAMES)
+        if "name" in df.columns:
+            df["name"] = mapped.fillna(df["name"])
+        else:
+            df["name"] = mapped.fillna(df["inverter_id"].astype(str))
+    if "site_id" in df.columns:
+        df["site_name"] = df["site_id"].apply(site_display_name)
+    return df
+
 
 def _get_pool() -> ConnectionPool:
     global _pool
@@ -85,12 +117,12 @@ def database_status() -> dict:
 
 
 def df_inverters() -> pd.DataFrame:
-    return _query("""
+    return _clientize(_query("""
         SELECT inverter_id AS id, inverter_id, site_id, name, active
         FROM motorview.inverters
         WHERE active = TRUE
         ORDER BY name
-    """)
+    """))
 
 
 _TELEMETRY_SELECT = """
@@ -127,7 +159,7 @@ def df_telemetry_recent(minutes: int = 60, inverter_id: str | None = None) -> pd
         sql += " AND t.inverter_id = %s"
         params.append(inverter_id)
     sql += " ORDER BY t.ts"
-    return _naive_utc(_query(sql, params), "ts")
+    return _clientize(_naive_utc(_query(sql, params), "ts"))
 
 
 def df_fast_current_recent(minutes: int = 15, inverter_id: str | None = None) -> pd.DataFrame:
@@ -149,7 +181,7 @@ def df_fast_current_recent(minutes: int = 15, inverter_id: str | None = None) ->
         sql += " AND f.inverter_id = %s"
         params.append(inverter_id)
     sql += " ORDER BY f.ts"
-    return _naive_utc(_query(sql, params), "ts", "window_start", "window_end")
+    return _clientize(_naive_utc(_query(sql, params), "ts", "window_start", "window_end"))
 
 
 def df_latest_reading() -> pd.DataFrame:
@@ -168,7 +200,7 @@ def df_latest_reading() -> pd.DataFrame:
          AND latest.max_ts=t.ts
         ORDER BY i.name
     """)
-    return _naive_utc(df, "ts")
+    return _clientize(_naive_utc(df, "ts"))
 
 
 def df_faults(days: int = 30, only_active: bool = False) -> pd.DataFrame:
@@ -192,7 +224,7 @@ def df_faults(days: int = 30, only_active: bool = False) -> pd.DataFrame:
     if only_active:
         sql += " AND f.event_type = 'fault_active'"
     sql += " ORDER BY f.ts DESC"
-    return _naive_utc(_query(sql, params), "ts")
+    return _clientize(_naive_utc(_query(sql, params), "ts"))
 
 
 def df_connectivity(limit: int = 40) -> pd.DataFrame:
@@ -202,7 +234,7 @@ def df_connectivity(limit: int = 40) -> pd.DataFrame:
         ORDER BY ts DESC
         LIMIT %s
     """, (limit,))
-    return _naive_utc(df, "ts")
+    return _clientize(_naive_utc(df, "ts"))
 
 
 def latest_gateway_status(site_id: str) -> dict:
