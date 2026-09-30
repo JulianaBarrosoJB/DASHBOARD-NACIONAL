@@ -7,6 +7,13 @@ import psycopg
 
 log = logging.getLogger("motorview.ingest.db")
 
+# Nomes canônicos por ID técnico. O ID nunca muda, preservando todas as
+# relações e o histórico; apenas o nome exibido/cadastrado é corrigido.
+INVERTER_NAMES = {
+    "inv01": "MOTOR 42",
+    "inv02": "MOTOR 44",
+}
+
 
 class MotorViewDatabase:
     def __init__(self, database_url: str):
@@ -77,7 +84,8 @@ class MotorViewDatabase:
             inverter_id, kind = parts[2], parts[3]
             ts = p.get("ts") or received_at
             inverters[(site_id, inverter_id)] = (
-                site_id, inverter_id, p.get("name") or inverter_id,
+                site_id, inverter_id,
+                INVERTER_NAMES.get(inverter_id, p.get("name") or inverter_id),
             )
 
             if kind == "telemetry":
