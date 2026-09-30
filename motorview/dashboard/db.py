@@ -251,6 +251,112 @@ def latest_gateway_status(site_id: str) -> dict:
     return {"status": row["status"], "ts": row["ts"]}
 
 
+
+def df_report_summary(days: int = 7) -> pd.DataFrame:
+    """Resumo por motor calculado no PostgreSQL, sem baixar milhões de leituras."""
+    start = datetime.now(timezone.utc) - timedelta(days=days)
+    df = _query("""
+        SELECT
+            t.site_id,
+            t.inverter_id,
+            i.name,
+            AVG(t.current_a) AS "corrente_media_A",
+            MAX(t.current_a) AS "corrente_max_telemetry_A",
+            AVG(t.voltage_v) AS "tensao_media_V",
+            AVG(t.frequency_hz) AS "frequencia_media_Hz",
+            AVG(t.speed_rpm) AS "velocidade_media_rpm",
+            AVG(t.torque_pct) AS "torque_medio_pct",
+            AVG(t.dc_link_v) AS "link_cc_medio_V",
+            COUNT(*) AS leituras,
+            SUM(CASE WHEN t.comm_error THEN 1 ELSE 0 END) AS leituras_com_erro
+        FROM motorview.telemetry t
+        JOIN motorview.inverters i
+          ON i.site_id=t.site_id AND i.inverter_id=t.inverter_id
+        WHERE t.ts >= %s
+        GROUP BY t.site_id, t.inverter_id, i.name
+        ORDER BY i.name
+    """, (start,))
+    if df.empty:
+        return df
+
+    fast = _query("""
+        SELECT
+            inverter_id,
+            AVG(current_avg_a) AS "corrente_fast_media_A",
+            MAX(current_max_a) AS "corrente_fast_max_A",
+            MIN(current_min_a) AS "corrente_fast_min_A"
+        FROM motorview.current_fast
+        WHERE ts >= %s
+        GROUP BY inverter_id
+    """, (start,))
+    if not fast.empty:
+        df = df.merge(fast, on="inverter_id", how="left")
+
+    df = _clientize(df)
+    df["corrente_media_A"] = df.get("corrente_fast_media_A", df["corrente_media_A"]).fillna(df["corrente_media_A"])
+    df["corrente_max_A"] = df.get("corrente_fast_max_A", df["corrente_max_telemetry_A"]).fillna(df["corrente_max_telemetry_A"])
+    df["corrente_min_A"] = df.get("corrente_fast_min_A", pd.Series(index=df.index, dtype=float))
+    df["disponibilidade_pct"] = (
+        100 * (1 - df["leituras_com_erro"].fillna(0) / df["leituras"].clip(lower=1))
+    ).round(1)
+    return df
+
+
+def df_report_current_trend(days: int = 7) -> pd.DataFrame:
+    """Série reduzida no servidor para gráficos de relatório."""
+    start = datetime.now(timezone.utc) - timedelta(days=days)
+    if days <= 1:
+        bucket = "1 minute"
+    elif days <= 7:
+        bucket = "5 minutes"
+    elif days <= 30:
+        bucket = "30 minutes"
+    else:
+        bucket = "2 hours"
+
+    df = _query(f"""
+        SELECT
+            f.site_id,
+            f.inverter_id,
+            i.name,
+            date_bin(INTERVAL '{bucket}', f.ts, TIMESTAMPTZ '2000-01-01 00:00:00+00') AS ts,
+            AVG(f.current_avg_a) AS "current_avg_A",
+            MAX(f.current_max_a) AS "current_max_A"
+        FROM motorview.current_fast f
+        JOIN motorview.inverters i
+          ON i.site_id=f.site_id AND i.inverter_id=f.inverter_id
+        WHERE f.ts >= %s
+        GROUP BY f.site_id, f.inverter_id, i.name, 4
+        ORDER BY 4, f.inverter_id
+    """, (start,))
+    return _clientize(_naive_utc(df, "ts"))
+
+
+def df_report_daily(days: int = 7) -> pd.DataFrame:
+    """Resumo diário por motor para tabela detalhada do PDF."""
+    start = datetime.now(timezone.utc) - timedelta(days=days)
+    df = _query("""
+        SELECT
+            t.site_id,
+            t.inverter_id,
+            i.name,
+            (t.ts AT TIME ZONE 'America/Sao_Paulo')::date AS data,
+            AVG(t.current_a) AS "corrente_media_A",
+            MAX(t.current_a) AS "corrente_max_A",
+            AVG(t.voltage_v) AS "tensao_media_V",
+            AVG(t.frequency_hz) AS "frequencia_media_Hz",
+            AVG(t.speed_rpm) AS "velocidade_media_rpm",
+            SUM(CASE WHEN t.comm_error THEN 1 ELSE 0 END) AS erros_comunicacao,
+            COUNT(*) AS leituras
+        FROM motorview.telemetry t
+        JOIN motorview.inverters i
+          ON i.site_id=t.site_id AND i.inverter_id=t.inverter_id
+        WHERE t.ts >= %s
+        GROUP BY t.site_id, t.inverter_id, i.name, 4
+        ORDER BY 4 DESC, i.name
+    """, (start,))
+    return _clientize(df)
+
 STATUS_WORD_BITS = {
     1: "run_command", 4: "quick_stop", 5: "second_ramp", 6: "config_state",
     7: "alarm", 8: "running", 9: "enabled", 10: "forward", 11: "jog",
