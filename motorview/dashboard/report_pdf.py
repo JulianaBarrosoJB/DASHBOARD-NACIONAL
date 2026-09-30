@@ -7,11 +7,13 @@ tendência de corrente, resumo diário e histórico de falhas.
 from io import BytesIO
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -42,6 +44,7 @@ HEX_RED = "#D62839"
 HEX_BORDER = "#E3E7EF"
 CAT_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#8456d8", "#2ab6c9"]
 CONTENT_WIDTH = 178 * mm
+LOCAL_TZ = ZoneInfo("America/Sao_Paulo")
 
 plt.rcParams.update({
     "font.family": "sans-serif",
@@ -106,20 +109,34 @@ def _chart_current_by_motor(agg: pd.DataFrame) -> Image:
 
 def _chart_current_trend(df: pd.DataFrame) -> Image:
     data = df.copy()
-    data["ts"] = pd.to_datetime(data["ts"])
+    # db.py entrega UTC sem tz para manter compatibilidade com o dashboard.
+    # No relatório convertemos explicitamente para o horário local de SUAPE.
+    data["ts"] = (
+        pd.to_datetime(data["ts"], utc=True)
+        .dt.tz_convert(LOCAL_TZ)
+    )
     fig, ax = plt.subplots(figsize=(7.0, 3.0))
     for idx, (name, sub) in enumerate(data.groupby("name")):
         sub = sub.sort_values("ts")
         color = CAT_COLORS[idx % len(CAT_COLORS)]
-        ax.plot(sub["ts"], sub["current_avg_A"], color=color, linewidth=1.8, label=f"{name} - média")
-        ax.plot(sub["ts"], sub["current_max_A"], color=color, linewidth=0.8, alpha=0.38, linestyle="--")
+        ax.plot(
+            sub["ts"], sub["current_avg_A"],
+            color=color, linewidth=1.9, label=f"{name} - média",
+        )
+        ax.plot(
+            sub["ts"], sub["current_max_A"],
+            color="#F2782F", linewidth=1.15, alpha=0.85,
+            linestyle="--", label=f"{name} - pico",
+        )
     ax.set_ylim(bottom=0)
     ax.set_ylabel("Corrente (A)")
+    ax.set_xlabel("Data / hora (Brasília)")
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%d/%m\n%H:%M", tz=LOCAL_TZ))
     ax.spines[["top", "right"]].set_visible(False)
     ax.grid(axis="y", color=HEX_BORDER, linewidth=0.7)
     ax.set_axisbelow(True)
     ax.legend(frameon=False, fontsize=7.5, ncol=2, loc="upper left")
-    fig.autofmt_xdate(rotation=25, ha="right")
+    ax.tick_params(axis="x", labelrotation=0)
     fig.tight_layout()
     return _fig_to_image(fig)
 
@@ -239,7 +256,7 @@ def build_pdf(
         Paragraph("PERÍODO ANALISADO", period_lbl),
         Paragraph(f"{start_date.strftime('%d/%m/%Y')} - {end_date.strftime('%d/%m/%Y')}", period_val),
     ]
-    gen_cell = Paragraph(f"Gerado em<br/><b>{datetime.now().strftime('%d/%m/%Y %H:%M')}</b>", period_gen)
+    gen_cell = Paragraph(f"Gerado em<br/><b>{datetime.now(LOCAL_TZ).strftime('%d/%m/%Y %H:%M')}</b>", period_gen)
     period_row = Table([[period_cell, gen_cell]], colWidths=[CONTENT_WIDTH-55*mm, 55*mm])
     period_row.setStyle(TableStyle([
         ("BACKGROUND",(0,0),(-1,-1),BLUE_SOFT), ("ROUNDEDCORNERS",[8,8,8,8]),
@@ -325,8 +342,15 @@ def build_pdf(
         detail = faults_df.sort_values("ts", ascending=False).head(40)
         data = [["Data/hora","Motor","Código","Descrição"]]
         for _,r in detail.iterrows():
-            ts_val=r["ts"]
-            ts_fmt=ts_val.strftime("%d/%m/%Y %H:%M") if hasattr(ts_val,"strftime") else str(ts_val)
+            ts_val = r["ts"]
+            if ts_val is not None and not pd.isna(ts_val):
+                ts_local = pd.Timestamp(ts_val)
+                if ts_local.tzinfo is None:
+                    ts_local = ts_local.tz_localize("UTC")
+                ts_local = ts_local.tz_convert(LOCAL_TZ)
+                ts_fmt = ts_local.strftime("%d/%m/%Y %H:%M")
+            else:
+                ts_fmt = "-"
             code = f"F{int(r['fault_code']):04d}" if pd.notna(r.get("fault_code")) else "-"
             data.append([ts_fmt,r["name"],code,(r.get("fault_description") or "")[:70]])
         story.append(_standard_table(data,[33*mm,35*mm,20*mm,90*mm],header_color=RED,font_size=7.6))
