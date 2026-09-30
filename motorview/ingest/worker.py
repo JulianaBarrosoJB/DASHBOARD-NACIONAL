@@ -1,14 +1,7 @@
-"""MotorView - worker 24/7 HiveMQ -> Neon PostgreSQL.
-
-O callback MQTT apenas valida/encaminha mensagens para uma fila local.
-Uma thread separada grava no PostgreSQL, evitando bloquear o loop MQTT.
-Em indisponibilidade temporária do banco, a mensagem atual é retentada
-com backoff e as próximas permanecem na fila (até o limite configurado).
-"""
+"""MotorView - worker durável HiveMQ -> Neon PostgreSQL."""
 
 import json
 import logging
-import queue
 import signal
 import ssl
 import sys
@@ -20,6 +13,7 @@ import paho.mqtt.client as mqtt
 
 from config import ConfigError, load_config
 from database import MotorViewDatabase
+from spool import DurableSpool
 
 _running = True
 
@@ -38,7 +32,7 @@ class IngestWorker:
         self.cfg = cfg
         self.log = logging.getLogger("motorview.ingest")
         self.db = MotorViewDatabase(cfg["database_url"])
-        self.items = queue.Queue(maxsize=cfg["queue_size"])
+        self.spool = DurableSpool(cfg["spool_path"])
         self.db_thread = threading.Thread(
             target=self._database_loop,
             name="motorview-postgres",
@@ -46,11 +40,15 @@ class IngestWorker:
         )
 
         mc = cfg["mqtt"]
-        # Sessão persistente: com o mesmo client_id, mensagens QoS 1 podem
-        # permanecer associadas à sessão do assinante durante desconexões.
+        # ACK manual: o broker só recebe PUBACK depois que a mensagem foi
+        # persistida no spool SQLite. Assim uma queda do processo não perde
+        # mensagens que estavam apenas em RAM.
         self.client = mqtt.Client(
+            mqtt.CallbackAPIVersion.VERSION1,
             client_id=mc["client_id"],
             clean_session=False,
+            protocol=mqtt.MQTTv311,
+            manual_ack=True,
         )
         self.client.username_pw_set(mc["username"], mc["password"])
         self.client.tls_set(
@@ -77,40 +75,49 @@ class IngestWorker:
     def _on_message(self, client, userdata, msg):
         received_at = now_iso()
         try:
-            payload = json.loads(msg.payload.decode("utf-8"))
+            payload_text = msg.payload.decode("utf-8")
+            payload = json.loads(payload_text)
             if not isinstance(payload, dict):
                 raise ValueError("payload JSON não é objeto")
-            self.items.put_nowait((msg.topic, payload, received_at))
-        except queue.Full:
-            self.log.error(
-                "Fila cheia (%d); mensagem não enfileirada: %s",
-                self.items.maxsize,
+
+            self.spool.add(msg.topic, payload_text, received_at)
+
+            # Só confirma ao HiveMQ depois de persistir localmente.
+            if msg.qos > 0:
+                rc = client.ack(msg.mid, msg.qos)
+                if rc != mqtt.MQTT_ERR_SUCCESS:
+                    self.log.error("Falha ao confirmar MQTT mid=%s rc=%s", msg.mid, rc)
+        except Exception:
+            self.log.exception(
+                "Falha ao persistir mensagem MQTT %s; conexão será refeita para redelivery",
                 msg.topic,
             )
-        except Exception:
-            self.log.exception("Mensagem MQTT inválida em %s", msg.topic)
+            # Sem ACK manual, desconectar força a sessão persistente a tentar
+            # entregar novamente a mensagem QoS 1.
+            try:
+                client.disconnect()
+            except Exception:
+                pass
 
     def _database_loop(self):
         backoff = 1
-        current = None
+        batch_size = self.cfg["batch_size"]
 
-        while _running or current is not None or not self.items.empty():
-            if current is None:
-                try:
-                    current = self.items.get(timeout=0.5)
-                except queue.Empty:
-                    continue
+        while _running:
+            batch = self.spool.pending(batch_size)
+            if not batch:
+                time.sleep(0.2)
+                continue
 
-            topic, payload, received_at = current
             try:
-                self.db.process(topic, payload, received_at)
-                self.items.task_done()
-                current = None
+                self.db.process_batch(batch)
+                self.spool.delete([row["id"] for row in batch])
                 backoff = 1
             except Exception:
                 self.log.exception(
-                    "Falha ao gravar %s; nova tentativa em %ss (fila=%d)",
-                    topic, backoff, self.items.qsize(),
+                    "Falha ao gravar lote no PostgreSQL; nova tentativa em %ss (spool=%d)",
+                    backoff,
+                    self.spool.count(),
                 )
                 self.db.close()
                 time.sleep(backoff)
@@ -127,20 +134,28 @@ class IngestWorker:
         self.client.connect_async(mc["host"], mc["port"], keepalive=30)
         self.client.loop_start()
 
-        self.log.info("MotorView ingest worker iniciado")
+        self.log.info(
+            "MotorView ingest worker iniciado; spool pendente=%d",
+            self.spool.count(),
+        )
 
         try:
             while _running:
                 time.sleep(0.5)
         finally:
-            self.log.info("Encerrando worker; fila pendente=%d", self.items.qsize())
-            self.client.loop_stop()
+            # Não é necessário drenar tudo no shutdown: o spool é persistente.
+            self.log.info(
+                "Encerrando worker; spool persistente pendente=%d",
+                self.spool.count(),
+            )
             try:
                 self.client.disconnect()
             except Exception:
                 pass
-            self.db_thread.join(timeout=30)
+            self.client.loop_stop()
+            self.db_thread.join(timeout=10)
             self.db.close()
+            self.spool.close()
 
 
 def main():
