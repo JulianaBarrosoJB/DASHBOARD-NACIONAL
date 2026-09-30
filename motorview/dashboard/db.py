@@ -86,7 +86,7 @@ def database_status() -> dict:
 
 def df_inverters() -> pd.DataFrame:
     return _query("""
-        SELECT inverter_id AS id, inverter_id, site_id, name, active, created_at, updated_at
+        SELECT inverter_id AS id, inverter_id, site_id, name, active
         FROM motorview.inverters
         WHERE active = TRUE
         ORDER BY name
