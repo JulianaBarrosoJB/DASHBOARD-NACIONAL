@@ -389,7 +389,7 @@ with hcol1:
                font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:16px;color:#fff;">ET</div>
           <div>
             <div style="font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:20px;color:{TEXT};">
-              MotorView</div>
+              ENDTECH <span style="color:{MUTED};font-weight:500;font-size:13px;">· MotorView</span></div>
             <div style="font-size:12.5px;color:{MUTED};">Monitoramento de Motores e Inversores - Nacional Gás</div>
           </div>
         </div>
@@ -397,10 +397,12 @@ with hcol1:
         unsafe_allow_html=True,
     )
 
-with hcol2:
-    if data_status["fresh"]:
+@st.fragment(run_every="10s")
+def cloud_status_badge():
+    status = db.database_status()
+    if status["fresh"]:
         badge_cls, mi, label = "badge-green", "cloud_done", "Dados em tempo real"
-    elif data_status["connected"]:
+    elif status["connected"]:
         badge_cls, mi, label = "badge-amber", "cloud_sync", "Sem dados recentes"
     else:
         badge_cls, mi, label = "badge-red", "cloud_off", "Banco indisponível"
@@ -409,6 +411,10 @@ with hcol2:
         f'<span class="badge {badge_cls}">{icon(mi, 15)} {label}</span></div>',
         unsafe_allow_html=True,
     )
+
+
+with hcol2:
+    cloud_status_badge()
 
 with hcol_user:
     user = auth.current_user()
@@ -913,7 +919,7 @@ elif page == "faults":
         show.columns = ["Data/hora", "Motor", "Código", "Descrição", "Estado"]
         st.dataframe(show, width="stretch", hide_index=True)
         st.download_button(
-            "Exportar CSV", show.to_csv(index=False).encode("utf-8"), icon=":material/download:",
+            "Exportar CSV detalhado", csv_bytes, icon=":material/download:",
             file_name=f"motorview_falhas_{datetime.now():%Y%m%d_%H%M}.csv", mime="text/csv",
         )
 
@@ -1077,23 +1083,6 @@ elif page == "reports":
             fig_bar.update_layout(showlegend=False)
             st.plotly_chart(style_fig(fig_bar, height=210, legend=False), width="stretch")
 
-        if not current_trend_df.empty:
-            st.markdown(
-                f'<div class="card-title" style="font-size:15px;">{icon("show_chart")} Tendência de corrente no período</div>',
-                unsafe_allow_html=True,
-            )
-            report_trend = current_trend_df.copy()
-            report_trend["ts_local"] = series_to_local(report_trend["ts"])
-            fig_report_trend = px.line(
-                report_trend, x="ts_local", y="current_avg_A", color="name",
-                labels={"current_avg_A": "Corrente média (A)", "ts_local": "", "name": "Motor"},
-                color_discrete_sequence=CAT_COLORS,
-            )
-            fig_report_trend.update_layout(hovermode="x unified")
-            fig_report_trend.update_yaxes(rangemode="tozero")
-            st.plotly_chart(style_fig(fig_report_trend, height=300), width="stretch")
-            st.write("")
-
         show_cols = [
             "name", "corrente_media_A", "corrente_max_A", "tensao_media_V",
             "frequencia_media_Hz", "disponibilidade_pct",
@@ -1123,15 +1112,59 @@ elif page == "reports":
             site_name="SUAPE",
         )
 
+        # CSV detalhado: uma linha por intervalo de corrente, acompanhado dos
+        # indicadores elétricos do período. Assim a exportação contém os dados
+        # usados nos gráficos, e não apenas a tabela-resumo da tela.
+        if not current_trend_df.empty:
+            csv_df = current_trend_df.copy()
+            csv_df["Data/hora (Brasília)"] = series_to_local(csv_df["ts"]).dt.strftime("%d/%m/%Y %H:%M:%S")
+            summary_cols = [
+                "inverter_id", "corrente_media_A", "corrente_max_A",
+                "tensao_media_V", "frequencia_media_Hz", "velocidade_media_rpm",
+                "torque_medio_pct", "link_cc_medio_V", "disponibilidade_pct",
+            ]
+            summary_csv = agg[summary_cols].copy()
+            fault_counts = (
+                faults.groupby("inverter_id").size().rename("eventos_falha").reset_index()
+                if not faults.empty else pd.DataFrame(columns=["inverter_id", "eventos_falha"])
+            )
+            summary_csv = summary_csv.merge(fault_counts, on="inverter_id", how="left")
+            summary_csv["eventos_falha"] = summary_csv["eventos_falha"].fillna(0).astype(int)
+            csv_df = csv_df.merge(summary_csv, on="inverter_id", how="left")
+            csv_df["Unidade"] = "SUAPE"
+            csv_df = csv_df[[
+                "Data/hora (Brasília)", "Unidade", "name",
+                "current_avg_A", "current_max_A",
+                "corrente_media_A", "corrente_max_A",
+                "tensao_media_V", "frequencia_media_Hz", "velocidade_media_rpm",
+                "torque_medio_pct", "link_cc_medio_V", "disponibilidade_pct",
+                "eventos_falha",
+            ]]
+            csv_df.columns = [
+                "Data/hora (Brasília)", "Unidade", "Motor",
+                "Corrente média do intervalo (A)", "Pico do intervalo (A)",
+                "Corrente média do período (A)", "Maior corrente do período (A)",
+                "Tensão média (V)", "Frequência média (Hz)", "Velocidade média (rpm)",
+                "Torque médio (%)", "Link CC médio (V)", "Disponibilidade (%)",
+                "Eventos de falha no período",
+            ]
+        else:
+            csv_df = show.copy()
+            csv_df.insert(0, "Unidade", "SUAPE")
+
+        csv_bytes = csv_df.round(2).to_csv(
+            index=False, sep=";", decimal=","
+        ).encode("utf-8-sig")
+
         dl1, dl2 = st.columns(2)
         dl1.download_button(
             "Exportar CSV", show.to_csv(index=False).encode("utf-8"), icon=":material/download:",
-            file_name=f"motorview_relatorio_{datetime.now():%Y%m%d_%H%M}.csv", mime="text/csv",
+            file_name=f"motorview_relatorio_{datetime.now(LOCAL_TZ):%Y%m%d_%H%M}.csv", mime="text/csv",
             width="stretch",
         )
         dl2.download_button(
             "Exportar PDF completo", pdf_bytes, icon=":material/picture_as_pdf:",
-            file_name=f"motorview_relatorio_{datetime.now():%Y%m%d_%H%M}.pdf", mime="application/pdf",
+            file_name=f"motorview_relatorio_{datetime.now(LOCAL_TZ):%Y%m%d_%H%M}.pdf", mime="application/pdf",
             width="stretch",
         )
 
