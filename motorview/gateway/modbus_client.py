@@ -99,7 +99,14 @@ class InverterReader:
         block_start = block_end = sorted_addresses[0]
 
         for address in sorted_addresses[1:]:
-            if address - block_start + 1 <= MAX_READ_REGISTERS:
+            # O CFW500 rejeita Function 03 quando o intervalo atravessa um
+            # endereço de parâmetro inexistente (exception code 02). Portanto,
+            # além do limite de tamanho, só agrupamos endereços realmente
+            # consecutivos presentes no mapa. Ex.: P0002..P0005 formam um
+            # bloco; P0007 e P0009 são leituras separadas.
+            is_consecutive = address == block_end + 1
+            within_limit = address - block_start + 1 <= MAX_READ_REGISTERS
+            if is_consecutive and within_limit:
                 block_end = address
             else:
                 blocks.append((block_start, block_end))
