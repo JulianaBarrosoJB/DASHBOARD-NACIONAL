@@ -126,8 +126,10 @@ class IngestWorker:
         self.db.close()
 
     def run(self):
-        # Falha cedo se a credencial/DB estiver incorreta.
-        self.db.connect()
+        # O worker não pode depender do PostgreSQL para iniciar. Se o Neon
+        # estiver indisponível, o MQTT continua recebendo e persistindo no
+        # spool local; a thread de banco reconecta com backoff e drena o
+        # backlog quando o PostgreSQL voltar.
         self.db_thread.start()
 
         mc = self.cfg["mqtt"]
