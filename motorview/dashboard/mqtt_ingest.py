@@ -14,7 +14,7 @@ recebe dados enquanto o processo do Streamlit está de pé. No plano
 gratuito do Streamlit Community Cloud o app hiberna após um tempo sem
 acesso - ao "acordar" ele reconecta e volta a receber dados normalmente,
 mas o que foi publicado durante a hibernação não é recuperado aqui (o
-gateway mantém esse histórico completo localmente no Raspberry Pi, em
+gateway mantém esse histórico completo localmente no gateway, em
 gateway/data/motorview_gateway.db). Para ingestão 24/7 sem essa lacuna,
 rode este mesmo assinante como um worker separado e sempre ativo (ex.:
 um pequeno serviço em Render/Railway/VPS) apontando para a mesma base.

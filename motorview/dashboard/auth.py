@@ -30,22 +30,28 @@ def _user_attr(name: str, default=None):
 def require_login():
     """Chamar como a PRIMEIRA coisa em app.py, antes de qualquer outro
     st.write/menu/etc. Interrompe a execução (st.stop()) se o acesso não
-    for permitido."""
+    for permitido. Detalhes de configuração (nomes de variável, o que
+    falta ajustar) só aparecem com MOTORVIEW_DEBUG=true - um visitante
+    comum nunca vê pista nenhuma de infraestrutura interna."""
     if not config.auth_configured():
         if config.require_auth():
             # MOTORVIEW_REQUIRE_AUTH=true e faltam os Secrets de [auth]:
             # falha fechada em vez de abrir o painel por engano em produção.
-            st.error(
-                "MOTORVIEW_REQUIRE_AUTH está ativado, mas os Secrets `[auth]`/`[auth.microsoft]` "
-                "não foram configurados. O acesso fica bloqueado até isso ser corrigido "
+            if config.debug_mode():
+                st.error(
+                    "MOTORVIEW_REQUIRE_AUTH está ativado, mas os Secrets `[auth]`/`[auth.microsoft]` "
+                    "não foram configurados. O acesso fica bloqueado até isso ser corrigido "
+                    "(veja o README do dashboard)."
+                )
+            else:
+                st.error("Acesso indisponível no momento.")
+            st.stop()
+        if config.debug_mode():
+            st.info(
+                "Autenticação Microsoft ainda não configurada (Secrets `[auth]` ausentes) - "
+                "rodando em modo aberto, só para desenvolvimento. Configure antes de publicar "
                 "(veja o README do dashboard)."
             )
-            st.stop()
-        st.info(
-            "Autenticação Microsoft ainda não configurada (Secrets `[auth]` ausentes) - "
-            "rodando em modo aberto, só para desenvolvimento. Configure antes de publicar "
-            "(veja o README do dashboard)."
-        )
         return
 
     if not _user_attr("is_logged_in", False):
@@ -58,11 +64,14 @@ def require_login():
     if config.require_auth() and not allowlist:
         # REQUIRE_AUTH=true + allowlist vazia (erro de configuração) = bloqueia
         # todo mundo, em vez de deixar qualquer usuário autenticado entrar.
-        st.error(
-            "MOTORVIEW_REQUIRE_AUTH está ativado, mas AUTHORIZED_EMAILS está vazio ou "
-            "não configurado. Por segurança, o acesso fica bloqueado para todos até a "
-            "allowlist ser preenchida (veja o README do dashboard)."
-        )
+        if config.debug_mode():
+            st.error(
+                "MOTORVIEW_REQUIRE_AUTH está ativado, mas AUTHORIZED_EMAILS está vazio ou "
+                "não configurado. Por segurança, o acesso fica bloqueado para todos até a "
+                "allowlist ser preenchida (veja o README do dashboard)."
+            )
+        else:
+            st.error("Acesso indisponível no momento.")
         st.stop()
 
     if allowlist and email not in allowlist:
@@ -86,14 +95,18 @@ def _render_access_denied(email: str):
         st.logout()
 
 
-def render_user_badge():
-    """Nome do usuário logado + botão de sair, pro cabeçalho do app.
-    Não faz nada se a autenticação ainda não estiver configurada."""
-    if not config.auth_configured():
-        return
-    name = _user_attr("name") or _user_attr("email") or "Usuário"
-    col_a, col_b = st.columns([5, 1])
-    with col_b:
-        st.caption(name)
-        if st.button("Sair", key="motorview_logout_btn"):
-            st.logout()
+def current_user() -> dict:
+    """Info do usuário pro cabeçalho do app.py: {logged_in, name, email}.
+    Em modo aberto (auth não configurada) logged_in vem False - app.py
+    decide o que mostrar nesse caso (ex.: "sessão local/dev")."""
+    if not config.auth_configured() or not _user_attr("is_logged_in", False):
+        return {"logged_in": False, "name": None, "email": None}
+    return {
+        "logged_in": True,
+        "name": _user_attr("name") or _user_attr("email") or "Usuário",
+        "email": _user_attr("email"),
+    }
+
+
+def logout_button(key: str = "motorview_logout_btn") -> bool:
+    return st.button("Sair", key=key)

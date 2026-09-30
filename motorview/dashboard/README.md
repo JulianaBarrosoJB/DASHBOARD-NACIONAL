@@ -1,7 +1,7 @@
 # MotorView Dashboard
 
 App [Streamlit](https://streamlit.io) que assina o MQTT publicado pelo
-[gateway](../gateway/README.md) (Raspberry Pi + Modbus RTU) e mostra em tempo
+[gateway](../gateway/README.md) (dispositivo de campo + Modbus RTU) e mostra em tempo
 real: status por motor, corrente (com pico via `current_fast`), falhas
 (evento atual + últimas 3 falhas internas do CFW-500) e histórico com
 exportação em CSV. Segue a mesma linha visual do
@@ -90,7 +90,16 @@ recebido; a conversão pra `America/Sao_Paulo` é só na hora de exibir, em
      produção. Sem essa flag, se alguém esquecer de configurar `[auth]`
      por engano, o app sobe em modo aberto (só com um aviso). Com a flag
      ativa e `[auth]` ausente, o app **bloqueia tudo** (`st.stop()`) em vez
-     de abrir por acidente - fail-closed.
+     de abrir por acidente - fail-closed. Isso vale também se `[auth]`
+     estiver configurado mas `AUTHORIZED_EMAILS` vier vazio: bloqueia geral
+     em vez de deixar qualquer autenticado entrar.
+- **`MOTORVIEW_DEBUG`**: deixe **de fora dos Secrets de produção** (ou
+  `"false"`). Os avisos internos de configuração (MQTT/auth não
+  configurados, nomes de variável, caminho de arquivos) só aparecem no
+  topo do app quando essa flag está `"true"` - assim um visitante comum
+  nunca vê nenhuma pista de infraestrutura, mesmo que algo esteja
+  temporariamente mal configurado. Ative só no seu `.env` local enquanto
+  desenvolve.
 
 ## Limitação importante (plano gratuito)
 
@@ -103,7 +112,7 @@ cada novo deploy/hibernação longa. Ou seja, nessa demo:
 - Se hibernar, ele perde a conexão MQTT; ao reabrir, reconecta e volta a
   gravar normalmente, mas o que foi publicado durante o período hibernado
   **não é recuperado no dashboard** (fica só no log local do gateway, em
-  `gateway/data/motorview_gateway.db`, no próprio Raspberry Pi).
+  `gateway/data/motorview_gateway.db`, no próprio dispositivo de campo).
 
 Para produção de verdade (histórico contínuo, sem lacunas), duas opções,
 ambas sem precisar tocar em `app.py` (só em `db.py`, mesmo ponto de troca
@@ -116,7 +125,7 @@ usado no ProdView):
    `current_fast` (~2 msg/s por inversor gera bastante linha por dia).
 2. **Worker de ingestão sempre ativo**: rodar `mqtt_ingest.py` como um
    processo separado e sempre ligado (um serviço pequeno em
-   Render/Railway/VPS, ou até no próprio Raspberry Pi) gravando na mesma
+   Render/Railway/VPS, ou até no próprio dispositivo de campo) gravando na mesma
    base Postgres - garante zero perda mesmo com o Streamlit dormindo.
 
 ## Estrutura

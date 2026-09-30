@@ -67,3 +67,12 @@ def require_auth() -> bool:
     por engano em produção. Default false (modo aberto) para não travar o
     desenvolvimento local."""
     return str(_get("MOTORVIEW_REQUIRE_AUTH", "false")).lower() == "true"
+
+
+def debug_mode() -> bool:
+    """MOTORVIEW_DEBUG=true mostra avisos internos de configuração (MQTT/auth
+    não configurados, nomes de variável, caminhos de arquivo etc.) - só quem
+    tem acesso ao .env/Secrets locais consegue ativar isso. Sem essa flag,
+    um visitante comum não vê nenhum detalhe de infraestrutura, mesmo que
+    algo esteja mal configurado."""
+    return str(_get("MOTORVIEW_DEBUG", "false")).lower() == "true"

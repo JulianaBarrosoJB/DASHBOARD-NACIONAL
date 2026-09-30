@@ -4,10 +4,10 @@ MotorView - Monitoramento de Motores e Inversores - Nacional Gás
 ENDTECH
 
 Recebe telemetria dos inversores (corrente, tensão, frequência, rpm,
-torque, falhas, corrente rápida) publicada via MQTT pelo gateway do
-Raspberry Pi (motorview/gateway) e mostra em tempo real, com histórico
-gravado em banco (SQLite nesta demo - ver db.py para trocar pela base
-definitiva/Postgres).
+torque, falhas, corrente rápida) publicada via MQTT pelo gateway de campo
+(motorview/gateway) e mostra em tempo real, com histórico gravado em
+banco (SQLite nesta demo - ver db.py para trocar pela base definitiva/
+Postgres).
 
 Segue a MESMA linguagem visual do ProdView (prodview/app.py) - mesma
 paleta, mesmos helpers (icon/style_fig/stat_card), mesmo padrão de menu
@@ -27,7 +27,9 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import auth
+import config
 import db
+import report_pdf
 from config import mqtt_config
 from mqtt_ingest import MqttIngestWorker
 
@@ -359,7 +361,7 @@ def latest_current_fast(inverter_id: str) -> dict | None:
 # Cabeçalho - mesmo layout do ProdView (logo + marca | status | relógio)
 # ---------------------------------------------------------------------
 
-hcol1, hcol2, hcol3 = st.columns([4.2, 2.0, 1.6])
+hcol1, hcol2, hcol_user, hcol3 = st.columns([3.3, 1.6, 2.1, 1.3])
 
 with hcol1:
     st.markdown(
@@ -380,19 +382,45 @@ with hcol1:
     )
 
 with hcol2:
-    if not mqtt_configured:
-        st.markdown(
-            f'<div style="text-align:right;padding-top:6px;">'
-            f'<span class="badge badge-amber">{icon("warning", 15)} MQTT não configurado</span></div>',
-            unsafe_allow_html=True,
-        )
-    else:
+    # Status operacional (conectado/reconectando) só aparece quando o MQTT
+    # já está configurado - detalhes de config ausente ficam só no modo
+    # debug (config.debug_mode()), pra não revelar infraestrutura a
+    # qualquer visitante.
+    if mqtt_configured:
         badge_cls = "badge-green" if ingest_worker.connected else "badge-amber"
         mi = "cloud_done" if ingest_worker.connected else "cloud_sync"
         label = "MQTT conectado" if ingest_worker.connected else "Conectando ao MQTT..."
         st.markdown(
             f'<div style="text-align:right;padding-top:6px;">'
             f'<span class="badge {badge_cls}">{icon(mi, 15)} {label}</span></div>',
+            unsafe_allow_html=True,
+        )
+    elif config.debug_mode():
+        st.markdown(
+            f'<div style="text-align:right;padding-top:6px;">'
+            f'<span class="badge badge-amber">{icon("warning", 15)} MQTT não configurado</span></div>',
+            unsafe_allow_html=True,
+        )
+
+with hcol_user:
+    user = auth.current_user()
+    if user["logged_in"]:
+        initials = "".join(p[0] for p in (user["name"] or "U").split()[:2]).upper() or "U"
+        st.markdown(
+            f'<div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;padding-top:4px;">'
+            f'<div style="text-align:right;line-height:1.25;">'
+            f'<div style="font-size:12.5px;font-weight:600;color:{TEXT};">{user["name"]}</div>'
+            f'<div style="font-size:10.5px;color:{MUTED};">sessão ativa</div></div>'
+            f'<div style="width:30px;height:30px;border-radius:50%;background:{BLUE_SOFT};color:{BLUE};'
+            f'display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex-shrink:0;">'
+            f'{initials}</div></div>',
+            unsafe_allow_html=True,
+        )
+        if auth.logout_button():
+            st.logout()
+    elif config.debug_mode():
+        st.markdown(
+            f'<div style="text-align:right;color:{MUTED};font-size:11px;padding-top:10px;">Sessão local (dev)</div>',
             unsafe_allow_html=True,
         )
 
@@ -404,13 +432,12 @@ with hcol3:
         unsafe_allow_html=True,
     )
 
-if not mqtt_configured:
+if not mqtt_configured and config.debug_mode():
     st.warning(
         "MQTT não configurado. Defina MOTORVIEW_MQTT_HOST/USERNAME/PASSWORD em "
         "`.streamlit/secrets.toml` (deploy) ou num `.env` local (veja `secrets.example.toml` "
         "e o README desta pasta)."
     )
-auth.render_user_badge()
 
 # ---------------------------------------------------------------------
 # Menu principal - mesmo mecanismo do ProdView: st.container(key="nav_row")
@@ -492,7 +519,7 @@ if page == "overview":
             unsafe_allow_html=True,
         )
         st.markdown(
-            f"<div class='mini-stat-row'><span><span class='{gw_dot}'></span>&nbsp; Gateway (Raspberry Pi)</span>"
+            f"<div class='mini-stat-row'><span><span class='{gw_dot}'></span>&nbsp; Gateway</span>"
             f"<b>{gw['status']}</b></div>"
             f"<div class='mini-stat-row'><span><span class='{mqtt_dot}'></span>&nbsp; MQTT (broker)</span>"
             f"<b>{'conectado' if ingest_worker.connected else 'desconectado'}</b></div>",
@@ -507,7 +534,7 @@ if page == "overview":
     st.markdown(f'<div class="card-title" style="font-size:15px;">{icon("dashboard")} Status por motor</div>',
                  unsafe_allow_html=True)
     if latest.empty:
-        st.info("Nenhuma leitura recebida ainda. Verifique se o gateway (Raspberry Pi) está publicando no MQTT.",
+        st.info("Nenhuma leitura recebida ainda. Verifique se o gateway está publicando no MQTT.",
                  icon=":material/info:")
     else:
         cols = st.columns(3)
@@ -681,21 +708,30 @@ elif page == "faults":
         active_faults = latest[latest["fault_code"].fillna(0) > 0]
         if not active_faults.empty:
             st.error(f"⚠ {len(active_faults)} motor(es) com falha ativa agora.", icon=":material/report:")
-        for _, row in latest.iterrows():
+
+        cols = st.columns(2)
+        for i, (_, row) in enumerate(latest.iterrows()):
             fault_code = int(row["fault_code"]) if pd.notna(row["fault_code"]) else 0
-            accent = RED if fault_code else GREEN
-            with st.container(border=True):
-                st.markdown(f"<div style='border-left:4px solid {accent};margin:-1rem -1rem 0 -1rem;padding:1rem;'>",
-                             unsafe_allow_html=True)
-                cols = st.columns([2, 2, 2])
-                cols[0].markdown(f"**{row['name']}**  ·  `{row['inverter_id']}`")
-                if fault_code == 0:
-                    cols[1].markdown(status_badge_html("SEM FALHA", GREEN, "check_circle"), unsafe_allow_html=True)
-                else:
-                    cols[1].markdown(status_badge_html(f"F{fault_code:04d}", RED, "report"), unsafe_allow_html=True)
-                    cols[2].caption(row.get("fault_description") or "")
-                cols[2].caption(f"detectado em {fmt_ts(row['ts'])}")
-                st.markdown("</div>", unsafe_allow_html=True)
+            if fault_code:
+                accent, badge = RED, status_badge_html(f"F{fault_code:04d}", RED, "report")
+            else:
+                accent, badge = GREEN, status_badge_html("SEM FALHA", GREEN, "check_circle")
+            desc_line = (f"<div style='color:{MUTED};font-size:12.5px;margin-top:6px;'>{row.get('fault_description') or ''}</div>"
+                          if fault_code else "")
+            with cols[i % 2]:
+                st.markdown(f"""
+                <div class="card motor-card" style="border-left-color:{accent};">
+                  <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                    <div>
+                      <div class="name">{row['name']}</div>
+                      <div class="sub">Inversor {row['inverter_id']}</div>
+                    </div>
+                    {badge}
+                  </div>
+                  {desc_line}
+                  <div class="motor-last">detectado em {fmt_ts(row['ts'])}</div>
+                </div>
+                """, unsafe_allow_html=True)
 
     st.write("")
     st.markdown(f'<div class="card-title" style="font-size:15px;">{icon("history_toggle_off")} Últimas falhas internas do CFW-500 (P0050/P0060/P0070)</div>',
@@ -714,31 +750,49 @@ elif page == "faults":
         else:
             row = row.iloc[0]
             last_code = row.get("last_fault_code")
+            second = row.get("second_fault_code")
+            third = row.get("third_fault_code")
+
             if pd.isna(last_code) or int(last_code or 0) == 0:
                 st.info("Nenhuma falha registrada no histórico interno desse motor.", icon=":material/info:")
             else:
-                with st.container(border=True):
-                    st.markdown("**Última falha**")
-                    st.markdown(f"### F{int(last_code):04d}")
-                    st.caption(row.get("last_fault_description") or "")
-                    fc = st.columns(4)
-                    fc[0].metric("Corrente", val_or_dash(row, "last_fault_current_A", "{:.1f} A"))
-                    fc[1].metric("Barramento CC", val_or_dash(row, "last_fault_dc_link_V", "{:.0f} V"))
-                    fc[2].metric("Frequência", val_or_dash(row, "last_fault_frequency_Hz", "{:.1f} Hz"))
-                    fc[3].metric("Temp. IGBT", val_or_dash(row, "last_fault_igbt_temp_C", "{:.0f} °C"))
-                    st.caption(f"Detectada pelo MotorView em: {fmt_ts(row['ts'])}")
+                rank_cols = st.columns(3)
+                with rank_cols[0]:
+                    st.markdown(f"""
+                    <div class="card" style="border-left:5px solid {RED};">
+                      <div class="sub">Última falha</div>
+                      <div class="name" style="font-size:22px;">F{int(last_code):04d}</div>
+                      <div style="color:{MUTED};font-size:12.5px;margin-top:4px;">{row.get('last_fault_description') or ''}</div>
+                      <div class="motor-grid" style="grid-template-columns:1fr;">
+                        <div style="display:flex;justify-content:space-between;"><span class="k">Corrente</span><span class="v">{val_or_dash(row, 'last_fault_current_A', '{:.1f} A')}</span></div>
+                        <div style="display:flex;justify-content:space-between;"><span class="k">Barramento CC</span><span class="v">{val_or_dash(row, 'last_fault_dc_link_V', '{:.0f} V')}</span></div>
+                        <div style="display:flex;justify-content:space-between;"><span class="k">Frequência</span><span class="v">{val_or_dash(row, 'last_fault_frequency_Hz', '{:.1f} Hz')}</span></div>
+                        <div style="display:flex;justify-content:space-between;"><span class="k">Temp. IGBT</span><span class="v">{val_or_dash(row, 'last_fault_igbt_temp_C', '{:.0f} °C')}</span></div>
+                      </div>
+                      <div class="motor-last">Detectada pelo MotorView em: {fmt_ts(row['ts'])}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
-            second = row.get("second_fault_code")
-            third = row.get("third_fault_code")
-            for label, code, desc in (
-                ("2ª última falha", second, row.get("second_fault_description")),
-                ("3ª última falha", third, row.get("third_fault_description")),
-            ):
-                if pd.notna(code) and int(code or 0) > 0:
-                    with st.container(border=True):
-                        st.markdown(f"**{label}**")
-                        st.markdown(f"### F{int(code):04d}")
-                        st.caption(desc or "")
+                for col, label, code, desc in (
+                    (rank_cols[1], "2ª última falha", second, row.get("second_fault_description")),
+                    (rank_cols[2], "3ª última falha", third, row.get("third_fault_description")),
+                ):
+                    with col:
+                        if pd.notna(code) and int(code or 0) > 0:
+                            st.markdown(f"""
+                            <div class="card" style="border-left:5px solid {AMBER};">
+                              <div class="sub">{label}</div>
+                              <div class="name" style="font-size:22px;">F{int(code):04d}</div>
+                              <div style="color:{MUTED};font-size:12.5px;margin-top:4px;">{desc or ''}</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        else:
+                            st.markdown(f"""
+                            <div class="card" style="border-left:5px solid {BORDER};">
+                              <div class="sub">{label}</div>
+                              <div style="color:{MUTED};font-size:13px;margin-top:10px;">Sem registro</div>
+                            </div>
+                            """, unsafe_allow_html=True)
 
     st.write("")
     st.markdown(f'<div class="card-title" style="font-size:15px;">{icon("list_alt")} Histórico de eventos de falha (log)</div>',
@@ -835,7 +889,7 @@ elif page == "connectivity":
     with c1:
         dot = "dot-on" if gw["status"] == "online" else "dot-off"
         st.markdown(
-            f'<div class="card"><div class="card-title">{icon("cell_tower")} Gateway (Raspberry Pi)</div>'
+            f'<div class="card"><div class="card-title">{icon("cell_tower")} Gateway</div>'
             f'<div style="display:flex;align-items:center;gap:8px;margin-top:6px;">'
             f'<span class="{dot}"></span><b style="font-size:16px;">{gw["status"]}</b></div>'
             f'<div style="color:{MUTED};font-size:12px;margin-top:6px;">Última atualização: {fmt_ts(gw_ts)}</div></div>',
@@ -909,11 +963,30 @@ elif page == "reports":
         st.write("")
 
         st.dataframe(agg, width="stretch", hide_index=True)
-        st.download_button(
+
+        start_date = (datetime.now(LOCAL_TZ) - timedelta(days=days)).date()
+        end_date = datetime.now(LOCAL_TZ).date()
+        pdf_kpis = {
+            "motores": len(agg),
+            "disponibilidade": float(agg["disponibilidade_pct"].mean()),
+            "falhas": len(faults),
+        }
+        pdf_bytes = report_pdf.build_pdf(
+            agg_df=agg, kpis=pdf_kpis, start_date=start_date, end_date=end_date,
+            faults_df=faults if not faults.empty else None,
+        )
+
+        dl1, dl2 = st.columns(2)
+        dl1.download_button(
             "Exportar CSV", agg.to_csv(index=False).encode("utf-8"), icon=":material/download:",
             file_name=f"motorview_relatorio_{datetime.now():%Y%m%d_%H%M}.csv", mime="text/csv",
+            width="stretch",
         )
-        st.caption("Exportação em PDF pode ser incluída depois, seguindo o mesmo padrão do report_pdf.py do ProdView.")
+        dl2.download_button(
+            "Exportar PDF", pdf_bytes, icon=":material/picture_as_pdf:",
+            file_name=f"motorview_relatorio_{datetime.now():%Y%m%d_%H%M}.pdf", mime="application/pdf",
+            width="stretch",
+        )
 
 
 st.markdown(
