@@ -40,6 +40,7 @@ class CloudFailoverIngest:
         self.inserted = 0
         self.skipped_existing = 0
         self.errors = 0
+        self._db_identity_logged = False
 
         mc = cfg["mqtt"]
         self.client = mqtt.Client(
@@ -139,6 +140,24 @@ class CloudFailoverIngest:
                         connect_timeout=10,
                         application_name="motorview-cloud-failover",
                     )
+                    if not self._db_identity_logged:
+                        with conn.cursor() as diag:
+                            diag.execute("""
+                                SELECT
+                                  current_user,
+                                  current_database(),
+                                  has_schema_privilege(current_user, 'motorview', 'USAGE'),
+                                  has_table_privilege(current_user, 'motorview.telemetry', 'INSERT'),
+                                  has_table_privilege(current_user, 'motorview.current_fast', 'INSERT'),
+                                  has_table_privilege(current_user, 'motorview.faults', 'INSERT')
+                            """)
+                            user, database, schema_ok, tele_ok, fast_ok, faults_ok = diag.fetchone()
+                        log.warning(
+                            "Failover DB identity: user=%s database=%s "
+                            "schema_usage=%s telemetry_insert=%s current_fast_insert=%s faults_insert=%s",
+                            user, database, schema_ok, tele_ok, fast_ok, faults_ok,
+                        )
+                        self._db_identity_logged = True
                 inserted = self._persist(conn, item)
                 if inserted:
                     self.inserted += 1
