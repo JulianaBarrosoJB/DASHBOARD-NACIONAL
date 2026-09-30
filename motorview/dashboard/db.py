@@ -224,13 +224,14 @@ def df_current_history(minutes: int = 1440, inverter_id: str | None = None) -> p
     if inverter_id:
         sql += " AND t.inverter_id = %s"
         params.append(inverter_id)
+    # Agrupa pela posição das expressões já selecionadas. Isso é
+    # importante porque repetir o bucket como outro placeholder (%s) faria o
+    # PostgreSQL enxergar duas expressões parametrizadas distintas e rejeitar
+    # o SELECT com GroupingError.
     sql += """
-        GROUP BY t.site_id, t.inverter_id, i.name,
-                 date_bin(make_interval(secs => %s), t.ts,
-                          TIMESTAMPTZ '2000-01-01 00:00:00+00')
-        ORDER BY ts
+        GROUP BY 2, 3, 4, 11
+        ORDER BY 4
     """
-    params.append(bucket_seconds)
     return _clientize(_naive_utc(_query(sql, params), "ts"))
 
 
