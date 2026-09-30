@@ -8,3 +8,5 @@ matplotlib>=3.8
 Pillow>=10.0
 psycopg[binary]>=3.2,<4
 psycopg-pool>=3.2,<4
+
+paho-mqtt>=2.1,<3
