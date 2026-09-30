@@ -919,8 +919,8 @@ elif page == "faults":
         show.columns = ["Data/hora", "Motor", "Código", "Descrição", "Estado"]
         st.dataframe(show, width="stretch", hide_index=True)
         st.download_button(
-            "Exportar CSV detalhado", csv_bytes, icon=":material/download:",
-            file_name=f"motorview_falhas_{datetime.now():%Y%m%d_%H%M}.csv", mime="text/csv",
+            "Exportar CSV", show.to_csv(index=False).encode("utf-8-sig"), icon=":material/download:",
+            file_name=f"motorview_falhas_{datetime.now(LOCAL_TZ):%Y%m%d_%H%M}.csv", mime="text/csv",
         )
 
 
