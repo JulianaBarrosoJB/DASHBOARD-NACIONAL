@@ -145,7 +145,8 @@ st.markdown(f"""
   div.stDownloadButton > button:hover {{ background:{BLUE_SOFT}; }}
 
   /* hero cards (Visão Geral) - mesmo mecanismo do ProdView */
-  .st-key-hero_a, .st-key-hero_b, .st-key-hero_c {{
+  .st-key-hero_a, .st-key-hero_b, .st-key-hero_c,
+  .st-key-gauge_disp, .st-key-gauge_run, .st-key-gauge_ok, .st-key-gauge_disp_report {{
       background:{PANEL}; border:1px solid {BORDER}; border-radius:14px;
       padding:16px 20px 20px; box-shadow:0 1px 2px rgba(16,24,40,.04), 0 4px 10px rgba(16,24,40,.05);
   }}
@@ -234,6 +235,30 @@ def stat_card(mi_icon: str, label: str, value: str, accent: str = BLUE) -> str:
       </div>
     </div>
     """
+
+
+def gauge_fig(value: float, title: str, color: str, height: int = 210):
+    """Mesmo gauge_fig() do ProdView - usado nos indicadores de % da frota."""
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=round(value, 1),
+        domain={"x": [0.12, 0.88], "y": [0, 1]},
+        number={"suffix": "%", "font": {"color": TEXT, "family": "Space Grotesk", "size": 26}},
+        title={"text": title, "font": {"color": MUTED, "size": 13}},
+        gauge={
+            "axis": {"range": [0, 100], "tickcolor": MUTED, "tickfont": {"size": 9}, "tickvals": [0, 50, 100]},
+            "bar": {"color": color, "thickness": 0.28},
+            "bgcolor": BG,
+            "borderwidth": 0,
+            "steps": [
+                {"range": [0, 60], "color": "#F3F5F8"},
+                {"range": [60, 85], "color": "#EAEDF3"},
+            ],
+        },
+    ))
+    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", height=height, margin=dict(l=36, r=36, t=40, b=10),
+                       font=dict(family="Inter, sans-serif", color=TEXT))
+    return fig
 
 
 # ---------------------------------------------------------------------
@@ -531,6 +556,21 @@ if page == "overview":
         )
 
     st.write("")
+    disponibilidade_pct = (100 * kpis["online"] / kpis["inversores"]) if kpis["inversores"] else 0
+    operando_pct = (100 * kpis["rodando"] / kpis["online"]) if kpis["online"] else 0
+    sem_falha_pct = (100 * (kpis["online"] - kpis["falhas_ativas"]) / kpis["online"]) if kpis["online"] else 0
+    gg1, gg2, gg3 = st.columns(3)
+    with gg1, st.container(key="gauge_disp"):
+        st.plotly_chart(gauge_fig(disponibilidade_pct, "Disponibilidade da frota", BLUE),
+                          width="stretch", config={"displayModeBar": False})
+    with gg2, st.container(key="gauge_run"):
+        st.plotly_chart(gauge_fig(operando_pct, "Motores operando", GREEN),
+                          width="stretch", config={"displayModeBar": False})
+    with gg3, st.container(key="gauge_ok"):
+        st.plotly_chart(gauge_fig(sem_falha_pct, "Motores sem falha", ORANGE),
+                          width="stretch", config={"displayModeBar": False})
+
+    st.write("")
     st.markdown(f'<div class="card-title" style="font-size:15px;">{icon("dashboard")} Status por motor</div>',
                  unsafe_allow_html=True)
     if latest.empty:
@@ -611,11 +651,7 @@ elif page == "motors":
 
             st.write("")
             sw = row.get("status_word")
-            st.markdown(
-                f'<div class="card-title">{icon("toggle_on")} Estados ativos (P0680) '
-                f'<span style="color:{MUTED};font-weight:400;font-size:12px;">- word `{int(sw) if pd.notna(sw) else "—"}`</span></div>',
-                unsafe_allow_html=True,
-            )
+            st.markdown(f'<div class="card-title">{icon("toggle_on")} Estados ativos</div>', unsafe_allow_html=True)
             st.markdown(status_bits_badges(sw), unsafe_allow_html=True)
 
             last_code = row.get("last_fault_code")
@@ -692,6 +728,34 @@ elif page == "current":
             st.plotly_chart(style_fig(fig, height=420), width="stretch", key=f"live_slow_{range_minutes}")
 
     live_current(range_minutes, selected)
+
+    st.write("")
+    st.markdown(f'<div class="card-title" style="font-size:15px;">{icon("area_chart")} Tendência de corrente</div>'
+                 '<div class="card-sub">Comportamento ao longo do tempo</div>', unsafe_allow_html=True)
+    tcol1, tcol2 = st.columns(2)
+    trend_minutes = tcol1.select_slider(
+        "Período da tendência", options=[60, 360, 1440, 4320, 10080], value=360,
+        format_func=lambda m: f"{m // 60} h" if m < 1440 else f"{m // 1440} d", key="current_trend_range",
+    )
+    trend_motor = tcol2.selectbox(
+        "Motor", options=["(soma da frota)"] + (inv_df["id"].tolist() if not inv_df.empty else []),
+        format_func=lambda i: "Soma da frota" if i == "(soma da frota)" else inv_df.set_index("id").loc[i, "name"],
+        key="current_trend_motor",
+    )
+    trend_inv_id = None if trend_motor == "(soma da frota)" else trend_motor
+    trend_df = db.df_telemetry_recent(minutes=trend_minutes, inverter_id=trend_inv_id)
+    if trend_df.empty:
+        st.info("Sem dados suficientes para o período selecionado.", icon=":material/info:")
+    else:
+        trend_df = trend_df.copy()
+        trend_df["ts_local"] = series_to_local(trend_df["ts"])
+        bucket = "1min" if trend_minutes <= 360 else ("5min" if trend_minutes <= 1440 else "30min")
+        agg_fn = "sum" if trend_inv_id is None else "mean"
+        agg = (trend_df.set_index("ts_local").resample(bucket)["current_A"].agg(agg_fn)
+               .dropna().reset_index())
+        fig = px.area(agg, x="ts_local", y="current_A", labels={"current_A": "Corrente (A)", "ts_local": ""})
+        fig.update_traces(line_color=BLUE, fillcolor="rgba(20,72,125,0.12)")
+        st.plotly_chart(style_fig(fig, height=300, legend=False), width="stretch")
 
 
 # ---------------------------------------------------------------------
@@ -961,6 +1025,18 @@ elif page == "reports":
                      unsafe_allow_html=True)
         r3.markdown(stat_card("report_problem", "Eventos de falha", f"{len(faults)}", RED), unsafe_allow_html=True)
         st.write("")
+
+        gcol, bcol = st.columns((1, 1.6))
+        with gcol, st.container(key="gauge_disp_report"):
+            st.plotly_chart(gauge_fig(float(agg["disponibilidade_pct"].mean()), "Disponibilidade média", ORANGE),
+                              width="stretch", config={"displayModeBar": False})
+        with bcol:
+            bar_df = agg.sort_values("corrente_media_A", ascending=True)
+            fig_bar = px.bar(bar_df, x="corrente_media_A", y="name", orientation="h",
+                               labels={"corrente_media_A": "Corrente média (A)", "name": ""},
+                               color_discrete_sequence=[BLUE])
+            fig_bar.update_layout(showlegend=False)
+            st.plotly_chart(style_fig(fig_bar, height=210, legend=False), width="stretch")
 
         st.dataframe(agg, width="stretch", hide_index=True)
 
