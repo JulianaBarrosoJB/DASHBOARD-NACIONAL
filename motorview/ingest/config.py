@@ -35,7 +35,11 @@ def load_config() -> dict:
                 "MOTORVIEW_MQTT_CLIENT_ID", "motorview-neon-ingest-planta1"
             ),
         },
-        "queue_size": max(100, int(os.getenv("MOTORVIEW_INGEST_QUEUE_SIZE", "10000"))),
+        "spool_path": os.getenv(
+            "MOTORVIEW_INGEST_SPOOL_PATH",
+            str(BASE_DIR / "data" / "ingest_spool.db"),
+        ),
+        "batch_size": max(10, int(os.getenv("MOTORVIEW_INGEST_BATCH_SIZE", "200"))),
         "log_level": os.getenv("MOTORVIEW_INGEST_LOG_LEVEL", "INFO").upper(),
     }
     return cfg
