@@ -28,15 +28,15 @@ fast_monitoring:
   raw_flush_interval_ms: 1000
   raw_retention_days: 7
 
-site_id: planta1                # identifica esta unidade/planta nos tópicos MQTT
+site_id: planta1                # ID técnico estável; nome exibido ao cliente: SUAPE
 
 inverters:
   - id: inv01
-    name: "Motor 01 - Linha 01"
+    name: "MOTOR 42"
     slave_id: 1
     register_map: registers_weg_cfw500.yaml
   - id: inv02
-    name: "Motor 02 - Linha 02"
+    name: "MOTOR 44"
     slave_id: 2
     register_map: registers_weg_cfw500.yaml
   # adicione um bloco "- id: ..." por inversor no barramento RS-485
