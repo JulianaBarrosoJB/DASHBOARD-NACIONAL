@@ -3,11 +3,9 @@ MotorView - Monitoramento de Motores e Inversores - Nacional Gás
 ====================================================================
 ENDTECH
 
-Recebe telemetria dos inversores (corrente, tensão, frequência, rpm,
-torque, falhas, corrente rápida) publicada via MQTT pelo gateway de campo
-(motorview/gateway) e mostra em tempo real, com histórico gravado em
-banco (SQLite nesta demo - ver db.py para trocar pela base definitiva/
-Postgres).
+Exibe telemetria dos inversores (corrente, tensão, frequência, rpm,
+torque, falhas e corrente rápida) persistida pelo worker de ingestão no
+PostgreSQL/Neon. O dashboard é somente leitura e não assina MQTT.
 
 Segue a MESMA linguagem visual do ProdView (prodview/app.py) - mesma
 paleta, mesmos helpers (icon/style_fig/stat_card), mesmo padrão de menu
@@ -30,8 +28,6 @@ import auth
 import config
 import db
 import report_pdf
-from config import mqtt_config
-from mqtt_ingest import MqttIngestWorker
 
 LOCAL_TZ = ZoneInfo("America/Sao_Paulo")
 
@@ -269,22 +265,17 @@ auth.require_login()
 
 
 # ---------------------------------------------------------------------
-# Setup: banco + assinante MQTT (uma única instância por processo)
+# Setup: dashboard read-only sobre PostgreSQL/Neon
 # ---------------------------------------------------------------------
 
 @st.cache_resource
 def bootstrap():
     db.init_db()
-    cfg = mqtt_config()
-    worker = MqttIngestWorker(cfg)
-    if cfg.get("host"):
-        worker.start()
-    return worker
+    return True
 
 
-ingest_worker = bootstrap()
-cfg = mqtt_config()
-mqtt_configured = bool(cfg.get("host"))
+bootstrap()
+data_status = db.database_status()
 
 st.session_state.setdefault("page", "overview")
 
@@ -414,25 +405,17 @@ with hcol1:
     )
 
 with hcol2:
-    # Status operacional (conectado/reconectando) só aparece quando o MQTT
-    # já está configurado - detalhes de config ausente ficam só no modo
-    # debug (config.debug_mode()), pra não revelar infraestrutura a
-    # qualquer visitante.
-    if mqtt_configured:
-        badge_cls = "badge-green" if ingest_worker.connected else "badge-amber"
-        mi = "cloud_done" if ingest_worker.connected else "cloud_sync"
-        label = "Dados em tempo real" if ingest_worker.connected else "Conectando..."
-        st.markdown(
-            f'<div style="text-align:right;padding-top:6px;">'
-            f'<span class="badge {badge_cls}">{icon(mi, 15)} {label}</span></div>',
-            unsafe_allow_html=True,
-        )
-    elif config.debug_mode():
-        st.markdown(
-            f'<div style="text-align:right;padding-top:6px;">'
-            f'<span class="badge badge-amber">{icon("warning", 15)} MQTT não configurado</span></div>',
-            unsafe_allow_html=True,
-        )
+    if data_status["fresh"]:
+        badge_cls, mi, label = "badge-green", "cloud_done", "Dados em tempo real"
+    elif data_status["connected"]:
+        badge_cls, mi, label = "badge-amber", "cloud_sync", "Sem dados recentes"
+    else:
+        badge_cls, mi, label = "badge-red", "cloud_off", "Banco indisponível"
+    st.markdown(
+        f'<div style="text-align:right;padding-top:6px;">'
+        f'<span class="badge {badge_cls}">{icon(mi, 15)} {label}</span></div>',
+        unsafe_allow_html=True,
+    )
 
 with hcol_user:
     user = auth.current_user()
@@ -464,12 +447,8 @@ with hcol3:
         unsafe_allow_html=True,
     )
 
-if not mqtt_configured and config.debug_mode():
-    st.warning(
-        "MQTT não configurado. Defina MOTORVIEW_MQTT_HOST/USERNAME/PASSWORD em "
-        "`.streamlit/secrets.toml` (deploy) ou num `.env` local (veja `secrets.example.toml` "
-        "e o README desta pasta)."
-    )
+if not data_status["connected"] and config.debug_mode():
+    st.warning("PostgreSQL/Neon indisponível. Verifique DATABASE_URL nos Secrets do Streamlit.")
 
 # ---------------------------------------------------------------------
 # Menu principal - mesmo mecanismo do ProdView: st.container(key="nav_row")
@@ -544,7 +523,7 @@ if page == "overview":
         gw = db.latest_gateway_status(site_id) if not inv_df.empty else {"status": "desconhecido", "ts": None}
         gw_ts = pd.to_datetime(gw["ts"], utc=True).tz_localize(None) if gw["ts"] else None
         gw_dot = "dot-on" if gw["status"] == "online" else "dot-off"
-        mqtt_dot = "dot-on" if ingest_worker.connected else "dot-off"
+        data_dot = "dot-on" if data_status["fresh"] else "dot-off"
         st.markdown(
             f'<div class="card-title">{icon("cell_tower")} Sistema</div>'
             f'<div class="card-sub">Site/planta: {site_id}</div>',
@@ -553,8 +532,8 @@ if page == "overview":
         st.markdown(
             f"<div class='mini-stat-row'><span><span class='{gw_dot}'></span>&nbsp; Gateway</span>"
             f"<b>{gw['status']}</b></div>"
-            f"<div class='mini-stat-row'><span><span class='{mqtt_dot}'></span>&nbsp; Dados em tempo real</span>"
-            f"<b>{'conectado' if ingest_worker.connected else 'desconectado'}</b></div>",
+            f"<div class='mini-stat-row'><span><span class='{data_dot}'></span>&nbsp; Dados na nuvem</span>"
+            f"<b>{'atualizados' if data_status['fresh'] else 'sem atualização recente'}</b></div>",
             unsafe_allow_html=True,
         )
         st.markdown(
@@ -960,11 +939,14 @@ elif page == "connectivity":
             unsafe_allow_html=True,
         )
     with c2:
-        dot = "dot-on" if ingest_worker.connected else "dot-off"
+        dot = "dot-on" if data_status["fresh"] else "dot-off"
+        data_label = "atualizados" if data_status["fresh"] else (
+            "sem dados recentes" if data_status["connected"] else "banco indisponível"
+        )
         st.markdown(
-            f'<div class="card"><div class="card-title">{icon("dns")} Conexão de dados</div>'
+            f'<div class="card"><div class="card-title">{icon("dns")} Dados na nuvem</div>'
             f'<div style="display:flex;align-items:center;gap:8px;margin-top:6px;">'
-            f'<span class="{dot}"></span><b style="font-size:16px;">{"conectado" if ingest_worker.connected else "desconectado"}</b></div></div>',
+            f'<span class="{dot}"></span><b style="font-size:16px;">{data_label}</b></div></div>',
             unsafe_allow_html=True,
         )
 
