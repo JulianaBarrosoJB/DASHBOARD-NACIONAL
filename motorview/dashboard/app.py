@@ -268,13 +268,6 @@ auth.require_login()
 # Setup: dashboard read-only sobre PostgreSQL/Neon
 # ---------------------------------------------------------------------
 
-@st.cache_resource
-def bootstrap():
-    db.init_db()
-    return True
-
-
-bootstrap()
 data_status = db.database_status()
 
 st.session_state.setdefault("page", "overview")
@@ -447,8 +440,12 @@ with hcol3:
         unsafe_allow_html=True,
     )
 
-if not data_status["connected"] and config.debug_mode():
-    st.warning("PostgreSQL/Neon indisponível. Verifique DATABASE_URL nos Secrets do Streamlit.")
+if not data_status["connected"]:
+    st.error(
+        "Não foi possível conectar ao banco de dados do MotorView. "
+        "Verifique o DATABASE_URL nos Secrets do Streamlit."
+    )
+    st.stop()
 
 # ---------------------------------------------------------------------
 # Menu principal - mesmo mecanismo do ProdView: st.container(key="nav_row")
