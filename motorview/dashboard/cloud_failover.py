@@ -196,7 +196,6 @@ class CloudFailoverIngest:
                           %s,%s,%s,%s,%s::jsonb,%s::jsonb,%s
                         )
                         ON CONFLICT (site_id,inverter_id,ts) DO NOTHING
-                        RETURNING id
                         """,
                         (
                             site_id,inverter_id,ts,bool(p.get("comm_error",False)),
@@ -220,7 +219,6 @@ class CloudFailoverIngest:
                           current_max_a,current_avg_a,samples,sample_interval_ms,payload,received_at
                         ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)
                         ON CONFLICT (site_id,inverter_id,ts) DO NOTHING
-                        RETURNING id
                         """,
                         (
                             site_id,inverter_id,ts,p.get("window_start"),p.get("window_end"),
@@ -239,7 +237,6 @@ class CloudFailoverIngest:
                           dc_link_v,frequency_hz,igbt_temp_c,status_word,payload,received_at
                         ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)
                         ON CONFLICT (site_id,inverter_id,ts,fault_code,event_type) DO NOTHING
-                        RETURNING id
                         """,
                         (
                             site_id,inverter_id,ts,int(p.get("fault_code") or 0),
@@ -248,4 +245,4 @@ class CloudFailoverIngest:
                             p.get("status_word"),json.dumps(p,ensure_ascii=False),received_at,
                         ),
                     )
-                return cur.fetchone() is not None
+                return cur.rowcount > 0
