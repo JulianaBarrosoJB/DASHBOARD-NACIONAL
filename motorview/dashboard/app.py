@@ -770,10 +770,13 @@ elif page == "current":
         if trend_inv_id is None:
             # Soma por instante antes do resample: evita somar todas as leituras
             # existentes dentro do minuto e inflar artificialmente a corrente.
-            fleet = (trend_df.groupby(["ts_local", "inverter_id"], as_index=False)["current_A"].mean()
-                     .groupby("ts_local", as_index=False)["current_A"].sum())
-            agg = (fleet.set_index("ts_local").resample(bucket)["current_A"].mean()
-                   .dropna().reset_index())
+            by_motor = (
+                trend_df.set_index("ts_local")
+                .groupby("inverter_id")["current_A"]
+                .resample(bucket).mean()
+                .dropna().reset_index()
+            )
+            agg = by_motor.groupby("ts_local", as_index=False)["current_A"].sum()
         else:
             agg = (trend_df.set_index("ts_local").resample(bucket)["current_A"].mean()
                    .dropna().reset_index())
