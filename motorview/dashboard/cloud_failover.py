@@ -177,15 +177,9 @@ class CloudFailoverIngest:
 
         with conn.transaction():
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO motorview.inverters(site_id,inverter_id,name,active)
-                    VALUES (%s,%s,%s,TRUE)
-                    ON CONFLICT (site_id,inverter_id)
-                    DO UPDATE SET name=EXCLUDED.name,active=TRUE,updated_at=NOW()
-                    """,
-                    (site_id, inverter_id, INVERTER_NAMES.get(inverter_id, p.get("name") or inverter_id)),
-                )
+                # O failover não altera cadastro/metadata de inversores.
+                # inv01/inv02 já são provisionados no Neon; esta role recebe
+                # apenas os privilégios necessários para dados operacionais.
 
                 if kind == "telemetry":
                     cur.execute(
