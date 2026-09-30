@@ -386,7 +386,7 @@ with hcol1:
           <div style="width:44px;height:44px;border-radius:10px;
                background:linear-gradient(135deg,{BLUE},{BLUE_2});
                display:flex;align-items:center;justify-content:center;
-               font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:15px;color:#fff;">MV</div>
+               font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:16px;color:#fff;">ET</div>
           <div>
             <div style="font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:20px;color:{TEXT};">
               MotorView</div>
@@ -1137,6 +1137,6 @@ elif page == "reports":
 
 st.markdown(
     f"<div style='text-align:center;color:{MUTED};font-size:12px;padding:24px 0 8px;'>"
-    "Sistema MotorView · Nacional Gás</div>",
+    "ENDTECH · Soluções em Engenharia - Sistema MotorView</div>",
     unsafe_allow_html=True,
 )
