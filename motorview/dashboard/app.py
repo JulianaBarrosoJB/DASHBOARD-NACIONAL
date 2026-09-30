@@ -1077,6 +1077,23 @@ elif page == "reports":
             fig_bar.update_layout(showlegend=False)
             st.plotly_chart(style_fig(fig_bar, height=210, legend=False), width="stretch")
 
+        if not current_trend_df.empty:
+            st.markdown(
+                f'<div class="card-title" style="font-size:15px;">{icon("show_chart")} Tendência de corrente no período</div>',
+                unsafe_allow_html=True,
+            )
+            report_trend = current_trend_df.copy()
+            report_trend["ts_local"] = series_to_local(report_trend["ts"])
+            fig_report_trend = px.line(
+                report_trend, x="ts_local", y="current_avg_A", color="name",
+                labels={"current_avg_A": "Corrente média (A)", "ts_local": "", "name": "Motor"},
+                color_discrete_sequence=CAT_COLORS,
+            )
+            fig_report_trend.update_layout(hovermode="x unified")
+            fig_report_trend.update_yaxes(rangemode="tozero")
+            st.plotly_chart(style_fig(fig_report_trend, height=300), width="stretch")
+            st.write("")
+
         show_cols = [
             "name", "corrente_media_A", "corrente_max_A", "tensao_media_V",
             "frequencia_media_Hz", "disponibilidade_pct",
