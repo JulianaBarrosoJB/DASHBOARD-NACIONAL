@@ -689,7 +689,7 @@ elif page == "current":
     range_minutes = st.select_slider(
         "Janela de tempo",
         options=[1, 5, 15, 30, 60, 180, 360, 720, 1440, 4320, 10080, 43200],
-        value=5,
+        value=1440,
         format_func=lambda m: (
             f"{m} min" if m < 60 else
             (f"{m // 60} h" if m < 1440 else f"{m // 1440} d")
