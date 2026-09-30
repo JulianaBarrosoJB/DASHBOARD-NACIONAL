@@ -1,318 +1,224 @@
-"""
-MotorView Dashboard - camada de dados
-========================================
-Igual à ideia do prodview/db.py: hoje fala com um SQLite local
-(data/motorview.db), alimentado em tempo real pelo assinante MQTT
-(mqtt_ingest.py). Quando quiser trocar por uma base persistente de
-verdade (Postgres no Supabase/Neon/Railway, por exemplo - recomendado
-para produção, já que o disco do Streamlit Community Cloud é apagado a
-cada novo deploy/hibernação), o ponto de troca é só a função
-get_conn() abaixo, mantendo os nomes de tabela/coluna (ou ajustando as
-queries) - o resto do app não muda.
+"""MotorView Dashboard - leitura PostgreSQL/Neon.
+
+O dashboard é somente leitura. A ingestão MQTT roda fora do Streamlit e grava
+no schema motorview; esta camada consulta esse schema usando DATABASE_URL.
 """
 
-import sqlite3
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+import threading
 
 import pandas as pd
+from psycopg_pool import ConnectionPool
 
-BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "data" / "motorview.db"
+import config
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS inverters (
-    id TEXT PRIMARY KEY,
-    site_id TEXT NOT NULL,
-    name TEXT NOT NULL,
-    first_seen TEXT NOT NULL,
-    last_seen TEXT
-);
-
-CREATE TABLE IF NOT EXISTS telemetry (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts TEXT NOT NULL,
-    inverter_id TEXT NOT NULL,
-    current_A REAL,
-    voltage_V REAL,
-    dc_link_V REAL,
-    frequency_Hz REAL,
-    speed_rpm REAL,
-    torque_pct REAL,
-    status_word INTEGER,
-    fault_code INTEGER,
-    fault_description TEXT,
-    last_fault_code INTEGER,
-    last_fault_description TEXT,
-    last_fault_current_A REAL,
-    last_fault_dc_link_V REAL,
-    last_fault_frequency_Hz REAL,
-    last_fault_igbt_temp_C REAL,
-    last_fault_status_word INTEGER,
-    second_fault_code INTEGER,
-    second_fault_description TEXT,
-    third_fault_code INTEGER,
-    third_fault_description TEXT,
-    comm_error INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS idx_telemetry_inv_ts ON telemetry(inverter_id, ts);
-
-CREATE TABLE IF NOT EXISTS faults (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts TEXT NOT NULL,
-    inverter_id TEXT NOT NULL,
-    fault_code INTEGER NOT NULL,
-    fault_description TEXT,
-    active INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_faults_ts ON faults(ts);
-
-CREATE TABLE IF NOT EXISTS fast_current (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts TEXT NOT NULL,
-    window_start TEXT,
-    window_end TEXT,
-    inverter_id TEXT NOT NULL,
-    current_A REAL,
-    current_min_A REAL,
-    current_max_A REAL,
-    current_avg_A REAL,
-    samples INTEGER,
-    sample_interval_ms INTEGER
-);
-CREATE INDEX IF NOT EXISTS idx_fast_current_inv_ts ON fast_current(inverter_id, ts);
-
-CREATE TABLE IF NOT EXISTS connectivity_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts TEXT NOT NULL,
-    site_id TEXT NOT NULL,
-    status TEXT NOT NULL
-);
-"""
+_pool = None
+_pool_lock = threading.Lock()
 
 
-def get_conn():
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
+def _get_pool() -> ConnectionPool:
+    global _pool
+    if _pool is None:
+        with _pool_lock:
+            if _pool is None:
+                url = config.database_url()
+                if not url:
+                    raise RuntimeError("DATABASE_URL não configurada")
+                _pool = ConnectionPool(
+                    conninfo=url,
+                    min_size=0,
+                    max_size=4,
+                    timeout=10,
+                    kwargs={
+                        "autocommit": True,
+                        "connect_timeout": 10,
+                        "application_name": "motorview-dashboard",
+                    },
+                )
+    return _pool
+
+
+def _query(sql: str, params=()) -> pd.DataFrame:
+    with _get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            cols = [d.name for d in cur.description] if cur.description else []
+            rows = cur.fetchall() if cols else []
+    return pd.DataFrame(rows, columns=cols)
+
+
+def _naive_utc(df: pd.DataFrame, *cols: str) -> pd.DataFrame:
+    if df.empty:
+        return df
+    for col in cols:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], utc=True).dt.tz_localize(None)
+    return df
 
 
 def init_db():
-    conn = get_conn()
-    with conn:
-        conn.executescript(SCHEMA)
-
-        # Migração leve para instalações existentes: CREATE TABLE IF NOT EXISTS
-        # não adiciona colunas novas em bancos já criados.
-        existing = {row["name"] for row in conn.execute("PRAGMA table_info(telemetry)")}
-        migrations = {
-            "last_fault_code": "INTEGER",
-            "last_fault_description": "TEXT",
-            "last_fault_current_A": "REAL",
-            "last_fault_dc_link_V": "REAL",
-            "last_fault_frequency_Hz": "REAL",
-            "last_fault_igbt_temp_C": "REAL",
-            "last_fault_status_word": "INTEGER",
-            "second_fault_code": "INTEGER",
-            "second_fault_description": "TEXT",
-            "third_fault_code": "INTEGER",
-            "third_fault_description": "TEXT",
-        }
-        for column, sql_type in migrations.items():
-            if column not in existing:
-                conn.execute(f"ALTER TABLE telemetry ADD COLUMN {column} {sql_type}")
-    conn.close()
+    """Valida a conexão. O dashboard não cria nem altera tabelas."""
+    with _get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+            cur.fetchone()
 
 
-# ---------------------------------------------------------------------
-# Ingestão (chamada pelo mqtt_ingest.py a cada mensagem MQTT recebida)
-# ---------------------------------------------------------------------
+def database_status() -> dict:
+    """Estado do Neon + idade da telemetria mais recente."""
+    try:
+        df = _query("SELECT MAX(ts) AS latest_ts FROM motorview.telemetry")
+        latest = None if df.empty else df.iloc[0]["latest_ts"]
+        if pd.isna(latest):
+            latest = None
+        fresh = False
+        if latest is not None:
+            latest_utc = pd.Timestamp(latest)
+            if latest_utc.tzinfo is None:
+                latest_utc = latest_utc.tz_localize("UTC")
+            else:
+                latest_utc = latest_utc.tz_convert("UTC")
+            fresh = (pd.Timestamp.now(tz="UTC") - latest_utc) <= pd.Timedelta(minutes=2)
+        return {"connected": True, "fresh": bool(fresh), "latest_ts": latest, "error": None}
+    except Exception as exc:
+        return {"connected": False, "fresh": False, "latest_ts": None, "error": str(exc)}
 
-def upsert_inverter(inverter_id: str, site_id: str, name: str, ts: str):
-    conn = get_conn()
-    with conn:
-        conn.execute(
-            "INSERT INTO inverters (id, site_id, name, first_seen, last_seen) VALUES (?,?,?,?,?) "
-            "ON CONFLICT(id) DO UPDATE SET last_seen=excluded.last_seen, name=excluded.name",
-            (inverter_id, site_id, name, ts, ts),
-        )
-    conn.close()
-
-
-def insert_telemetry(row: dict):
-    conn = get_conn()
-    with conn:
-        conn.execute(
-            "INSERT INTO telemetry (ts, inverter_id, current_A, voltage_V, dc_link_V, frequency_Hz, "
-            "speed_rpm, torque_pct, status_word, fault_code, fault_description, "
-            "last_fault_code, last_fault_description, last_fault_current_A, last_fault_dc_link_V, "
-            "last_fault_frequency_Hz, last_fault_igbt_temp_C, last_fault_status_word, "
-            "second_fault_code, second_fault_description, third_fault_code, third_fault_description, comm_error) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (
-                row.get("ts"), row.get("inverter_id"), row.get("current_A"), row.get("voltage_V"),
-                row.get("dc_link_V"), row.get("frequency_Hz"), row.get("speed_rpm"), row.get("torque_pct"),
-                row.get("status_word"), row.get("fault_code"), row.get("fault_description"),
-                row.get("last_fault_code"), row.get("last_fault_description"),
-                row.get("last_fault_current_A"), row.get("last_fault_dc_link_V"),
-                row.get("last_fault_frequency_Hz"), row.get("last_fault_igbt_temp_C"),
-                row.get("last_fault_status_word"), row.get("second_fault_code"),
-                row.get("second_fault_description"), row.get("third_fault_code"),
-                row.get("third_fault_description"), 1 if row.get("comm_error") else 0,
-            ),
-        )
-    conn.close()
-
-
-def insert_fast_current(row: dict):
-    conn = get_conn()
-    with conn:
-        conn.execute(
-            "INSERT INTO fast_current (ts, window_start, window_end, inverter_id, current_A, "
-            "current_min_A, current_max_A, current_avg_A, samples, sample_interval_ms) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (
-                row.get("ts"), row.get("window_start"), row.get("window_end"),
-                row.get("inverter_id"), row.get("current_A"), row.get("current_min_A"),
-                row.get("current_max_A"), row.get("current_avg_A"), row.get("samples"),
-                row.get("sample_interval_ms"),
-            ),
-        )
-    conn.close()
-
-
-def insert_fault(row: dict):
-    conn = get_conn()
-    with conn:
-        conn.execute(
-            "INSERT INTO faults (ts, inverter_id, fault_code, fault_description, active) VALUES (?,?,?,?,?)",
-            (row.get("ts"), row.get("inverter_id"), row.get("fault_code", 0),
-             row.get("fault_description"), 1 if row.get("active") else 0),
-        )
-    conn.close()
-
-
-def log_connectivity(site_id: str, status: str, ts: str):
-    conn = get_conn()
-    with conn:
-        conn.execute(
-            "INSERT INTO connectivity_log (ts, site_id, status) VALUES (?,?,?)",
-            (ts, site_id, status),
-        )
-    conn.close()
-
-
-def prune_old_telemetry(days: int = 30):
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    conn = get_conn()
-    with conn:
-        conn.execute("DELETE FROM telemetry WHERE ts < ?", (cutoff,))
-    conn.close()
-
-
-# ---------------------------------------------------------------------
-# Consultas (DataFrames prontos pro Streamlit)
-# ---------------------------------------------------------------------
 
 def df_inverters() -> pd.DataFrame:
-    conn = get_conn()
-    df = pd.read_sql_query("SELECT * FROM inverters ORDER BY name", conn)
-    conn.close()
-    return df
+    return _query("""
+        SELECT inverter_id AS id, inverter_id, site_id, name, active, created_at, updated_at
+        FROM motorview.inverters
+        WHERE active = TRUE
+        ORDER BY name
+    """)
+
+
+_TELEMETRY_SELECT = """
+    t.id, t.site_id, t.inverter_id, t.ts,
+    t.current_a AS "current_A",
+    t.voltage_v AS "voltage_V",
+    t.dc_link_v AS "dc_link_V",
+    t.frequency_hz AS "frequency_Hz",
+    t.speed_rpm, t.torque_pct, t.status_word, t.fault_code,
+    COALESCE(t.payload->>'fault_description', '') AS fault_description,
+    t.last_fault_code, t.last_fault_description,
+    t.last_fault_current_a AS "last_fault_current_A",
+    t.last_fault_dc_link_v AS "last_fault_dc_link_V",
+    t.last_fault_frequency_hz AS "last_fault_frequency_Hz",
+    t.last_fault_igbt_temp_c AS "last_fault_igbt_temp_C",
+    t.last_fault_status_word,
+    t.second_fault_code, t.second_fault_description,
+    t.third_fault_code, t.third_fault_description,
+    t.comm_error, i.name
+"""
 
 
 def df_telemetry_recent(minutes: int = 60, inverter_id: str | None = None) -> pd.DataFrame:
-    conn = get_conn()
-    start = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
-    query = "SELECT t.*, i.name FROM telemetry t JOIN inverters i ON i.id = t.inverter_id WHERE t.ts >= ?"
+    start = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+    sql = f"""
+        SELECT {_TELEMETRY_SELECT}
+        FROM motorview.telemetry t
+        JOIN motorview.inverters i
+          ON i.site_id=t.site_id AND i.inverter_id=t.inverter_id
+        WHERE t.ts >= %s
+    """
     params = [start]
     if inverter_id:
-        query += " AND t.inverter_id = ?"
+        sql += " AND t.inverter_id = %s"
         params.append(inverter_id)
-    query += " ORDER BY t.ts"
-    df = pd.read_sql_query(query, conn, params=params)
-    conn.close()
-    if not df.empty:
-        df["ts"] = pd.to_datetime(df["ts"], utc=True).dt.tz_localize(None)
-    return df
+    sql += " ORDER BY t.ts"
+    return _naive_utc(_query(sql, params), "ts")
 
 
 def df_fast_current_recent(minutes: int = 15, inverter_id: str | None = None) -> pd.DataFrame:
-    conn = get_conn()
-    start = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
-    query = (
-        "SELECT f.*, i.name FROM fast_current f "
-        "LEFT JOIN inverters i ON i.id = f.inverter_id WHERE f.ts >= ?"
-    )
+    start = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+    sql = """
+        SELECT f.id, f.site_id, f.inverter_id, f.ts, f.window_start, f.window_end,
+               f.current_a AS "current_A",
+               f.current_min_a AS "current_min_A",
+               f.current_max_a AS "current_max_A",
+               f.current_avg_a AS "current_avg_A",
+               f.samples, f.sample_interval_ms, i.name
+        FROM motorview.current_fast f
+        JOIN motorview.inverters i
+          ON i.site_id=f.site_id AND i.inverter_id=f.inverter_id
+        WHERE f.ts >= %s
+    """
     params = [start]
     if inverter_id:
-        query += " AND f.inverter_id = ?"
+        sql += " AND f.inverter_id = %s"
         params.append(inverter_id)
-    query += " ORDER BY f.ts"
-    df = pd.read_sql_query(query, conn, params=params)
-    conn.close()
-    if not df.empty:
-        for col in ("ts", "window_start", "window_end"):
-            if col in df.columns:
-                df[col] = pd.to_datetime(df[col], utc=True).dt.tz_localize(None)
-    return df
+    sql += " ORDER BY f.ts"
+    return _naive_utc(_query(sql, params), "ts", "window_start", "window_end")
 
 
 def df_latest_reading() -> pd.DataFrame:
-    """Última leitura de cada inversor (para os cards/status em tempo real)."""
-    conn = get_conn()
-    df = pd.read_sql_query(
-        "SELECT t.*, i.name, i.site_id FROM telemetry t "
-        "JOIN inverters i ON i.id = t.inverter_id "
-        "WHERE t.id IN (SELECT MAX(id) FROM telemetry GROUP BY inverter_id) "
-        "ORDER BY i.name",
-        conn,
-    )
-    conn.close()
-    if not df.empty:
-        df["ts"] = pd.to_datetime(df["ts"], utc=True).dt.tz_localize(None)
-    return df
+    df = _query(f"""
+        SELECT {_TELEMETRY_SELECT}
+        FROM motorview.telemetry t
+        JOIN motorview.inverters i
+          ON i.site_id=t.site_id AND i.inverter_id=t.inverter_id
+        JOIN (
+            SELECT site_id, inverter_id, MAX(ts) AS max_ts
+            FROM motorview.telemetry
+            GROUP BY site_id, inverter_id
+        ) latest
+          ON latest.site_id=t.site_id
+         AND latest.inverter_id=t.inverter_id
+         AND latest.max_ts=t.ts
+        ORDER BY i.name
+    """)
+    return _naive_utc(df, "ts")
 
 
 def df_faults(days: int = 30, only_active: bool = False) -> pd.DataFrame:
-    conn = get_conn()
-    start = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    query = "SELECT f.*, i.name FROM faults f JOIN inverters i ON i.id = f.inverter_id WHERE f.ts >= ?"
+    start = datetime.now(timezone.utc) - timedelta(days=days)
+    sql = """
+        SELECT f.id, f.site_id, f.inverter_id, f.ts, f.fault_code,
+               f.fault_description,
+               CASE WHEN f.event_type='fault_active' THEN 1 ELSE 0 END AS active,
+               f.event_type,
+               f.current_a AS "current_A",
+               f.dc_link_v AS "dc_link_V",
+               f.frequency_hz AS "frequency_Hz",
+               f.igbt_temp_c AS "igbt_temp_C",
+               f.status_word, i.name
+        FROM motorview.faults f
+        JOIN motorview.inverters i
+          ON i.site_id=f.site_id AND i.inverter_id=f.inverter_id
+        WHERE f.ts >= %s
+    """
     params = [start]
     if only_active:
-        query += " AND f.active = 1"
-    query += " ORDER BY f.ts DESC"
-    df = pd.read_sql_query(query, conn, params=params)
-    conn.close()
-    if not df.empty:
-        df["ts"] = pd.to_datetime(df["ts"], utc=True).dt.tz_localize(None)
-    return df
+        sql += " AND f.event_type = 'fault_active'"
+    sql += " ORDER BY f.ts DESC"
+    return _naive_utc(_query(sql, params), "ts")
 
 
 def df_connectivity(limit: int = 40) -> pd.DataFrame:
-    conn = get_conn()
-    df = pd.read_sql_query("SELECT * FROM connectivity_log ORDER BY ts DESC LIMIT ?", conn, params=[limit])
-    conn.close()
-    if not df.empty:
-        df["ts"] = pd.to_datetime(df["ts"], utc=True).dt.tz_localize(None)
-    return df
+    df = _query("""
+        SELECT id, site_id, ts, source, status, message
+        FROM motorview.connectivity
+        ORDER BY ts DESC
+        LIMIT %s
+    """, (limit,))
+    return _naive_utc(df, "ts")
 
 
 def latest_gateway_status(site_id: str) -> dict:
-    conn = get_conn()
-    row = conn.execute(
-        "SELECT ts, status FROM connectivity_log WHERE site_id = ? ORDER BY ts DESC LIMIT 1",
-        (site_id,),
-    ).fetchone()
-    conn.close()
-    if not row:
+    df = _query("""
+        SELECT ts, status
+        FROM motorview.connectivity
+        WHERE site_id=%s
+        ORDER BY ts DESC
+        LIMIT 1
+    """, (site_id,))
+    if df.empty:
         return {"status": "desconhecido", "ts": None}
+    row = df.iloc[0]
     return {"status": row["status"], "ts": row["ts"]}
 
 
-# bit -> nome, igual ao status_word_bits do gateway/registers_weg_cfw500.yaml
-# (mantido aqui em Python pra não precisar o dashboard ler o YAML do gateway).
 STATUS_WORD_BITS = {
     1: "run_command", 4: "quick_stop", 5: "second_ramp", 6: "config_state",
     7: "alarm", 8: "running", 9: "enabled", 10: "forward", 11: "jog",
@@ -335,7 +241,7 @@ def kpis_now() -> dict:
             "corrente_total": 0.0, "gateway_status": "desconhecido",
         }
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=2)
-    online = latest[(latest["ts"] >= cutoff) & (latest["comm_error"] == 0)]
+    online = latest[(latest["ts"] >= cutoff) & (~latest["comm_error"].fillna(False))]
     falhas_ativas = int((latest["fault_code"].fillna(0) > 0).sum())
     rodando = sum(1 for w in online["status_word"] if decode_status_word(w).get("running"))
 
