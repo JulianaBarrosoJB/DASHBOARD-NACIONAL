@@ -386,10 +386,10 @@ with hcol1:
           <div style="width:44px;height:44px;border-radius:10px;
                background:linear-gradient(135deg,{BLUE},{BLUE_2});
                display:flex;align-items:center;justify-content:center;
-               font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:16px;color:#fff;">ET</div>
+               font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:15px;color:#fff;">MV</div>
           <div>
             <div style="font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:20px;color:{TEXT};">
-              ENDTECH <span style="color:{MUTED};font-weight:500;font-size:13px;">· MotorView</span></div>
+              MotorView</div>
             <div style="font-size:12.5px;color:{MUTED};">Monitoramento de Motores e Inversores - Nacional Gás</div>
           </div>
         </div>
@@ -755,19 +755,44 @@ elif page == "current":
         key="current_trend_motor",
     )
     trend_inv_id = None if trend_motor == "(soma da frota)" else trend_motor
-    trend_df = db.df_telemetry_recent(minutes=trend_minutes, inverter_id=trend_inv_id)
-    if trend_df.empty:
-        empty_state("Sem dados suficientes para o período selecionado.")
-    else:
+
+    @st.fragment(run_every="5s")
+    def current_trend(trend_minutes: int, trend_inv_id):
+        trend_df = db.df_telemetry_recent(minutes=trend_minutes, inverter_id=trend_inv_id)
+        if trend_df.empty:
+            empty_state("Sem dados suficientes para o período selecionado.")
+            return
+
         trend_df = trend_df.copy()
         trend_df["ts_local"] = series_to_local(trend_df["ts"])
         bucket = "1min" if trend_minutes <= 360 else ("5min" if trend_minutes <= 1440 else "30min")
-        agg_fn = "sum" if trend_inv_id is None else "mean"
-        agg = (trend_df.set_index("ts_local").resample(bucket)["current_A"].agg(agg_fn)
-               .dropna().reset_index())
-        fig = px.area(agg, x="ts_local", y="current_A", labels={"current_A": "Corrente (A)", "ts_local": ""})
-        fig.update_traces(line_color=BLUE, fillcolor="rgba(20,72,125,0.12)")
-        st.plotly_chart(style_fig(fig, height=300, legend=False), width="stretch")
+
+        if trend_inv_id is None:
+            # Soma por instante antes do resample: evita somar todas as leituras
+            # existentes dentro do minuto e inflar artificialmente a corrente.
+            fleet = (trend_df.groupby(["ts_local", "inverter_id"], as_index=False)["current_A"].mean()
+                     .groupby("ts_local", as_index=False)["current_A"].sum())
+            agg = (fleet.set_index("ts_local").resample(bucket)["current_A"].mean()
+                   .dropna().reset_index())
+        else:
+            agg = (trend_df.set_index("ts_local").resample(bucket)["current_A"].mean()
+                   .dropna().reset_index())
+
+        fig = px.area(
+            agg, x="ts_local", y="current_A",
+            labels={"current_A": "Corrente (A)", "ts_local": ""},
+        )
+        fig.update_traces(line_color=BLUE, line_width=2.2, fillcolor="rgba(20,72,125,0.10)")
+        fig.update_layout(hovermode="x unified")
+        fig.update_yaxes(rangemode="tozero")
+        st.plotly_chart(
+            style_fig(fig, height=300, legend=False),
+            width="stretch",
+            key=f"trend_{trend_minutes}_{trend_inv_id or 'fleet'}",
+        )
+        st.caption("Atualização automática a cada 5 s.")
+
+    current_trend(trend_minutes, trend_inv_id)
 
 
 # ---------------------------------------------------------------------
@@ -1019,25 +1044,22 @@ elif page == "reports":
     st.markdown(f'<div class="card-title" style="font-size:15px;">{icon("summarize")} Resumo do período</div>',
                  unsafe_allow_html=True)
     days = st.slider("Período (dias)", 1, 90, 7, key="report_days")
-    telem = db.df_telemetry_recent(minutes=days * 24 * 60)
-    if telem.empty:
+
+    agg = db.df_report_summary(days=days)
+    if agg.empty:
         empty_state("Sem dados suficientes no período para gerar o relatório.")
     else:
-        agg = telem.groupby("name").agg(
-            corrente_media_A=("current_A", "mean"),
-            corrente_max_A=("current_A", "max"),
-            leituras=("current_A", "count"),
-            leituras_com_erro=("comm_error", "sum"),
-        ).reset_index()
-        agg["disponibilidade_pct"] = (100 * (1 - agg["leituras_com_erro"] / agg["leituras"])).round(1)
-        agg = agg.round(2)
-
         faults = db.df_faults(days=days)
-        r1, r2, r3 = st.columns(3)
-        r1.markdown(stat_card("inventory_2", "Motores no relatório", f"{len(agg)}", BLUE), unsafe_allow_html=True)
-        r2.markdown(stat_card("insights", "Disponibilidade média", f"{agg['disponibilidade_pct'].mean():.1f}%", ORANGE),
-                     unsafe_allow_html=True)
-        r3.markdown(stat_card("report_problem", "Eventos de falha", f"{len(faults)}", RED), unsafe_allow_html=True)
+        current_trend_df = db.df_report_current_trend(days=days)
+        daily_df = db.df_report_daily(days=days)
+
+        r1, r2, r3, r4 = st.columns(4)
+        r1.markdown(stat_card("inventory_2", "Motores", f"{len(agg)}", BLUE), unsafe_allow_html=True)
+        r2.markdown(stat_card("insights", "Disponibilidade", f"{agg['disponibilidade_pct'].mean():.1f}%", ORANGE),
+                    unsafe_allow_html=True)
+        r3.markdown(stat_card("bolt", "Maior corrente", f"{agg['corrente_max_A'].max():.1f} A", BLUE_2),
+                    unsafe_allow_html=True)
+        r4.markdown(stat_card("report_problem", "Eventos de falha", f"{len(faults)}", RED), unsafe_allow_html=True)
         st.write("")
 
         gcol, bcol = st.columns((1, 1.6))
@@ -1052,7 +1074,14 @@ elif page == "reports":
             fig_bar.update_layout(showlegend=False)
             st.plotly_chart(style_fig(fig_bar, height=210, legend=False), width="stretch")
 
-        st.dataframe(agg, width="stretch", hide_index=True)
+        show_cols = [
+            "name", "corrente_media_A", "corrente_max_A", "tensao_media_V",
+            "frequencia_media_Hz", "disponibilidade_pct",
+        ]
+        show = agg[show_cols].copy()
+        show.columns = ["Motor", "Corrente média (A)", "Corrente máx. (A)", "Tensão média (V)",
+                        "Frequência média (Hz)", "Disponibilidade (%)"]
+        st.dataframe(show.round(2), width="stretch", hide_index=True)
 
         start_date = (datetime.now(LOCAL_TZ) - timedelta(days=days)).date()
         end_date = datetime.now(LOCAL_TZ).date()
@@ -1060,27 +1089,34 @@ elif page == "reports":
             "motores": len(agg),
             "disponibilidade": float(agg["disponibilidade_pct"].mean()),
             "falhas": len(faults),
+            "corrente_media": float(agg["corrente_media_A"].mean()),
+            "corrente_max": float(agg["corrente_max_A"].max()),
         }
         pdf_bytes = report_pdf.build_pdf(
-            agg_df=agg, kpis=pdf_kpis, start_date=start_date, end_date=end_date,
+            agg_df=agg,
+            kpis=pdf_kpis,
+            start_date=start_date,
+            end_date=end_date,
             faults_df=faults if not faults.empty else None,
+            current_trend_df=current_trend_df if not current_trend_df.empty else None,
+            daily_df=daily_df if not daily_df.empty else None,
+            site_name="SUAPE",
         )
 
         dl1, dl2 = st.columns(2)
         dl1.download_button(
-            "Exportar CSV", agg.to_csv(index=False).encode("utf-8"), icon=":material/download:",
+            "Exportar CSV", show.to_csv(index=False).encode("utf-8"), icon=":material/download:",
             file_name=f"motorview_relatorio_{datetime.now():%Y%m%d_%H%M}.csv", mime="text/csv",
             width="stretch",
         )
         dl2.download_button(
-            "Exportar PDF", pdf_bytes, icon=":material/picture_as_pdf:",
+            "Exportar PDF completo", pdf_bytes, icon=":material/picture_as_pdf:",
             file_name=f"motorview_relatorio_{datetime.now():%Y%m%d_%H%M}.pdf", mime="application/pdf",
             width="stretch",
         )
 
-
 st.markdown(
     f"<div style='text-align:center;color:{MUTED};font-size:12px;padding:24px 0 8px;'>"
-    "ENDTECH · Soluções em Engenharia - Sistema MotorView</div>",
+    "Sistema MotorView · Nacional Gás</div>",
     unsafe_allow_html=True,
 )
