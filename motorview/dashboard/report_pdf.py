@@ -335,7 +335,7 @@ def build_pdf(
         story.append(Paragraph("Nenhuma falha registrada no período selecionado.", sub))
 
     story += [Spacer(1,16), HRFlowable(width="100%",color=BORDER,thickness=0.8), Spacer(1,4)]
-    story.append(Paragraph(f"Sistema MotorView · Nacional Gás · Unidade {site_name}", small))
+    story.append(Paragraph(f"ENDTECH · Soluções em Engenharia - Sistema MotorView · Nacional Gás · Unidade {site_name}", small))
 
     doc.build(story)
     return buf.getvalue()
