@@ -687,7 +687,13 @@ elif page == "motors":
 
 elif page == "current":
     range_minutes = st.select_slider(
-        "Janela de tempo", options=[1, 5, 15, 30, 60, 180], value=5, format_func=lambda m: f"{m} min"
+        "Janela de tempo",
+        options=[1, 5, 15, 30, 60, 180, 360, 720, 1440, 4320, 10080, 43200],
+        value=5,
+        format_func=lambda m: (
+            f"{m} min" if m < 60 else
+            (f"{m // 60} h" if m < 1440 else f"{m // 1440} d")
+        ),
     )
     inv_df = db.df_inverters()
     selected = st.multiselect(
@@ -696,9 +702,17 @@ elif page == "current":
         format_func=lambda i: inv_df.set_index("id").loc[i, "name"] if not inv_df.empty else i,
     )
 
-    @st.fragment(run_every="1s")
+    # Para até 3 h usamos a série rápida. Em janelas maiores, a consulta
+    # histórica é agregada no PostgreSQL e atualiza com menor frequência.
+    current_refresh = "1s" if range_minutes <= 180 else "15s"
+
+    @st.fragment(run_every=current_refresh)
     def live_current(range_minutes: int, selected_ids: list):
-        fast = db.df_fast_current_recent(minutes=range_minutes)
+        if range_minutes <= 180:
+            fast = db.df_fast_current_recent(minutes=range_minutes)
+        else:
+            fast = db.df_current_history(minutes=range_minutes)
+
         if not fast.empty and selected_ids:
             fast = fast[fast["inverter_id"].isin(selected_ids)]
 
@@ -761,7 +775,10 @@ elif page == "current":
             )
             fig.update_yaxes(rangemode="tozero")
             st.plotly_chart(style_fig(fig, height=420), width="stretch", key=f"live_fast_{range_minutes}")
-            st.caption("Linha = corrente filtrada para visualização. Picos relevantes são destacados; os dados originais permanecem preservados no histórico.")
+            if range_minutes <= 180:
+                st.caption("Linha = corrente filtrada para visualização. Picos relevantes são destacados; atualização automática a cada 1 s.")
+            else:
+                st.caption("Histórico agregado para visualização eficiente; máximos do intervalo preservam os picos. Atualização automática a cada 15 s.")
         else:
             slow = db.df_telemetry_recent(minutes=range_minutes)
             if not slow.empty and selected_ids:
