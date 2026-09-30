@@ -516,14 +516,15 @@ if page == "overview":
 
     with hc3, st.container(key="hero_c"):
         inv_df = db.df_inverters()
-        site_id = inv_df["site_id"].iloc[0] if not inv_df.empty else "—"
-        gw = db.latest_gateway_status(site_id) if not inv_df.empty else {"status": "desconhecido", "ts": None}
+        site_id = inv_df["site_id"].iloc[0] if not inv_df.empty else None
+        site_name = db.site_display_name(site_id)
+        gw = db.latest_gateway_status(site_id) if site_id else {"status": "desconhecido", "ts": None}
         gw_ts = pd.to_datetime(gw["ts"], utc=True).tz_localize(None) if gw["ts"] else None
         gw_dot = "dot-on" if gw["status"] == "online" else "dot-off"
         data_dot = "dot-on" if data_status["fresh"] else "dot-off"
         st.markdown(
             f'<div class="card-title">{icon("cell_tower")} Sistema</div>'
-            f'<div class="card-sub">Site/planta: {site_id}</div>',
+            f'<div class="card-sub">Unidade: {site_name}</div>',
             unsafe_allow_html=True,
         )
         st.markdown(
@@ -567,7 +568,7 @@ if page == "overview":
                 st.markdown(f"""
                 <div class="card motor-card" style="border-left-color:{color};border-left-style:{border_style};">
                   <div class="name">{row['name']}</div>
-                  <div class="sub">Inversor {row['inverter_id']}</div>
+                  <div class="sub">Unidade SUAPE</div>
                   {status_badge_html(label, color, mi)}
                   <div class="motor-grid">
                     <div class="k">Corrente</div><div class="v">{val_or_dash(row, 'current_A', '{:.1f} A')}</div>
@@ -607,7 +608,7 @@ elif page == "motors":
             c1, c2 = st.columns([3, 1])
             with c1:
                 st.markdown(f"### {row['name']}")
-                st.caption(f"ID do inversor: `{row['inverter_id']}`  ·  Site: `{row['site_id']}`")
+                st.caption(f"Unidade: {db.site_display_name(row['site_id'])}")
             with c2:
                 st.markdown(status_badge_html(label, color, mi), unsafe_allow_html=True)
 
@@ -650,7 +651,7 @@ elif page == "motors":
 
 elif page == "current":
     range_minutes = st.select_slider(
-        "Janela de tempo", options=[5, 15, 30, 60, 180], value=15, format_func=lambda m: f"{m} min"
+        "Janela de tempo", options=[1, 5, 15, 30, 60, 180], value=5, format_func=lambda m: f"{m} min"
     )
     inv_df = db.df_inverters()
     selected = st.multiselect(
@@ -676,7 +677,7 @@ elif page == "current":
                          unsafe_allow_html=True)
             s3.markdown(stat_card("show_chart", "Corrente média", f"{fast['current_avg_A'].mean():.1f} A", BLUE_2),
                          unsafe_allow_html=True)
-            s4.markdown(stat_card("dataset", "Amostras (últ. janela)", f"{int(latest_row['samples'].fillna(0).sum())}", GREEN),
+            s4.markdown(stat_card("dataset", "Atualizações na janela", f"{len(fast)}", GREEN),
                          unsafe_allow_html=True)
             st.write("")
 
@@ -684,13 +685,47 @@ elif page == "current":
             for idx, (inv_id, sub) in enumerate(fast.groupby("inverter_id")):
                 color = CAT_COLORS[idx % len(CAT_COLORS)]
                 name = sub["name"].iloc[0] if pd.notna(sub["name"].iloc[0]) else inv_id
-                fig.add_trace(go.Scatter(x=sub["ts_local"], y=sub["current_avg_A"], mode="lines",
-                                           name=f"{name} · média", line=dict(color=color, width=2.5)))
-                fig.add_trace(go.Scatter(x=sub["ts_local"], y=sub["current_max_A"], mode="lines",
-                                           name=f"{name} · pico", line=dict(color=color, width=1.5, dash="dot")))
-            fig.update_layout(yaxis_title="Corrente (A)")
+                sub = sub.sort_values("ts_local").copy()
+
+                # A janela móvel curta remove o serrilhado de quantização sem
+                # alterar a aquisição armazenada no banco. Picos relevantes
+                # continuam visíveis como eventos separados.
+                sub["current_display_A"] = (
+                    sub.set_index("ts_local")["current_avg_A"]
+                    .rolling("4s", center=True, min_periods=1)
+                    .median()
+                    .to_numpy()
+                )
+                fig.add_trace(go.Scatter(
+                    x=sub["ts_local"], y=sub["current_display_A"], mode="lines",
+                    name=name, line=dict(color=color, width=2.5),
+                    hovertemplate="%{y:.2f} A<extra>" + name + "</extra>",
+                ))
+
+                significant = sub[
+                    sub["current_max_A"].notna()
+                    & (
+                        (sub["current_max_A"] >= sub["current_display_A"] + 0.5)
+                        | (sub["current_max_A"] >= sub["current_display_A"] * 1.15)
+                    )
+                ]
+                if not significant.empty:
+                    fig.add_trace(go.Scatter(
+                        x=significant["ts_local"], y=significant["current_max_A"],
+                        mode="markers", name=f"{name} · pico relevante",
+                        marker=dict(color=color, size=7, symbol="diamond"),
+                        hovertemplate="%{y:.2f} A · pico<extra>" + name + "</extra>",
+                    ))
+
+            fig.update_layout(
+                yaxis_title="Corrente (A)",
+                xaxis_title="",
+                hovermode="x unified",
+                legend_title_text="",
+            )
+            fig.update_yaxes(rangemode="tozero")
             st.plotly_chart(style_fig(fig, height=420), width="stretch", key=f"live_fast_{range_minutes}")
-            st.caption("Linha contínua = média da janela; pontilhada = maior pico capturado.")
+            st.caption("Linha = corrente filtrada para visualização. Picos relevantes são destacados; os dados originais permanecem preservados no histórico.")
         else:
             slow = db.df_telemetry_recent(minutes=range_minutes)
             if not slow.empty and selected_ids:
@@ -765,7 +800,7 @@ elif page == "faults":
                   <div style="display:flex;justify-content:space-between;align-items:flex-start;">
                     <div>
                       <div class="name">{row['name']}</div>
-                      <div class="sub">Inversor {row['inverter_id']}</div>
+                      <div class="sub">Unidade SUAPE</div>
                     </div>
                     {badge}
                   </div>
@@ -958,7 +993,7 @@ elif page == "connectivity":
             label, color, mi, dashed = motor_status(row)
             with st.container(border=True):
                 c1, c2, c3 = st.columns([3, 1.4, 2])
-                c1.markdown(f"**{row['name']}** · `{row['inverter_id']}`")
+                c1.markdown(f"**{row['name']}** · SUAPE")
                 c2.markdown(status_badge_html(label, color, mi), unsafe_allow_html=True)
                 c3.caption(f"última leitura: {fmt_ts(row['ts'])} ({time_ago(row['ts'])})")
     st.caption("Um motor sem comunicação não afeta a exibição dos demais.")
@@ -970,8 +1005,9 @@ elif page == "connectivity":
     if conn.empty:
         empty_state("Sem eventos de conectividade registrados ainda.")
     else:
-        show = conn[["ts", "site_id", "status"]].copy()
+        show = conn[["ts", "site_name", "status"]].copy()
         show["ts"] = show["ts"].apply(fmt_ts)
+        show.columns = ["Data/hora", "Unidade", "Status"]
         st.dataframe(show, width="stretch", hide_index=True)
 
 
