@@ -421,7 +421,7 @@ with hcol2:
     if mqtt_configured:
         badge_cls = "badge-green" if ingest_worker.connected else "badge-amber"
         mi = "cloud_done" if ingest_worker.connected else "cloud_sync"
-        label = "MQTT conectado" if ingest_worker.connected else "Conectando ao MQTT..."
+        label = "Dados em tempo real" if ingest_worker.connected else "Conectando..."
         st.markdown(
             f'<div style="text-align:right;padding-top:6px;">'
             f'<span class="badge {badge_cls}">{icon(mi, 15)} {label}</span></div>',
@@ -546,14 +546,14 @@ if page == "overview":
         gw_dot = "dot-on" if gw["status"] == "online" else "dot-off"
         mqtt_dot = "dot-on" if ingest_worker.connected else "dot-off"
         st.markdown(
-            f'<div class="card-title">{icon("cell_tower")} Gateway e MQTT</div>'
+            f'<div class="card-title">{icon("cell_tower")} Sistema</div>'
             f'<div class="card-sub">Site/planta: {site_id}</div>',
             unsafe_allow_html=True,
         )
         st.markdown(
             f"<div class='mini-stat-row'><span><span class='{gw_dot}'></span>&nbsp; Gateway</span>"
             f"<b>{gw['status']}</b></div>"
-            f"<div class='mini-stat-row'><span><span class='{mqtt_dot}'></span>&nbsp; MQTT (broker)</span>"
+            f"<div class='mini-stat-row'><span><span class='{mqtt_dot}'></span>&nbsp; Dados em tempo real</span>"
             f"<b>{'conectado' if ingest_worker.connected else 'desconectado'}</b></div>",
             unsafe_allow_html=True,
         )
@@ -663,7 +663,7 @@ elif page == "motors":
             last_code = row.get("last_fault_code")
             if pd.notna(last_code) and int(last_code or 0) > 0:
                 st.write("")
-                st.markdown(f'<div class="card-title">{icon("report_problem")} Última falha registrada no CFW-500</div>',
+                st.markdown(f'<div class="card-title">{icon("report_problem")} Última falha registrada</div>',
                              unsafe_allow_html=True)
                 st.markdown(f"**F{int(last_code):04d}** - {row.get('last_fault_description') or ''}")
 
@@ -799,7 +799,7 @@ elif page == "faults":
                 """, unsafe_allow_html=True)
 
     st.write("")
-    st.markdown(f'<div class="card-title" style="font-size:15px;">{icon("history_toggle_off")} Últimas falhas internas do CFW-500 (P0050/P0060/P0070)</div>',
+    st.markdown(f'<div class="card-title" style="font-size:15px;">{icon("history_toggle_off")} Últimas falhas registradas</div>',
                  unsafe_allow_html=True)
     if latest.empty:
         empty_state("Nenhum motor cadastrado ainda.")
@@ -888,7 +888,7 @@ elif page == "history":
     VAR_OPTIONS = {
         "current_A": "Corrente", "frequency_Hz": "Frequência", "speed_rpm": "RPM",
         "voltage_V": "Tensão", "dc_link_V": "Barramento CC", "torque_pct": "Torque",
-        "current_max_A": "Pico de corrente (current_fast)", "fault": "Falha (log de eventos)",
+        "current_max_A": "Pico de corrente", "fault": "Falha (log de eventos)",
     }
     c1, c2, c3, c4 = st.columns(4)
     hist_inv = c1.selectbox(
@@ -962,10 +962,9 @@ elif page == "connectivity":
     with c2:
         dot = "dot-on" if ingest_worker.connected else "dot-off"
         st.markdown(
-            f'<div class="card"><div class="card-title">{icon("dns")} MQTT (assinante do dashboard)</div>'
+            f'<div class="card"><div class="card-title">{icon("dns")} Conexão de dados</div>'
             f'<div style="display:flex;align-items:center;gap:8px;margin-top:6px;">'
-            f'<span class="{dot}"></span><b style="font-size:16px;">{"conectado" if ingest_worker.connected else "desconectado"}</b></div>'
-            f'<div style="color:{MUTED};font-size:12px;margin-top:6px;">Broker: {cfg.get("host") or "—"}</div></div>',
+            f'<span class="{dot}"></span><b style="font-size:16px;">{"conectado" if ingest_worker.connected else "desconectado"}</b></div></div>',
             unsafe_allow_html=True,
         )
 
