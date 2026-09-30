@@ -184,6 +184,56 @@ def df_fast_current_recent(minutes: int = 15, inverter_id: str | None = None) ->
     return _clientize(_naive_utc(_query(sql, params), "ts", "window_start", "window_end"))
 
 
+def df_current_history(minutes: int = 1440, inverter_id: str | None = None) -> pd.DataFrame:
+    """Corrente histórica agregada no PostgreSQL para janelas longas.
+
+    Evita transferir milhares/milhões de amostras ao Streamlit. O bucket é
+    escolhido para manter detalhe suficiente sem sobrecarregar Neon/dashboard.
+    """
+    start = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+    if minutes <= 360:
+        bucket_seconds = 30
+    elif minutes <= 1440:
+        bucket_seconds = 120
+    elif minutes <= 10080:
+        bucket_seconds = 600
+    else:
+        bucket_seconds = 1800
+
+    sql = """
+        SELECT
+            MIN(t.id) AS id,
+            t.site_id,
+            t.inverter_id,
+            date_bin(make_interval(secs => %s), t.ts,
+                     TIMESTAMPTZ '2000-01-01 00:00:00+00') AS ts,
+            AVG(t.current_a) AS "current_A",
+            MIN(t.current_a) AS "current_min_A",
+            MAX(t.current_a) AS "current_max_A",
+            AVG(t.current_a) AS "current_avg_A",
+            COUNT(*)::int AS samples,
+            (%s * 1000)::int AS sample_interval_ms,
+            i.name
+        FROM motorview.telemetry t
+        JOIN motorview.inverters i
+          ON i.site_id=t.site_id AND i.inverter_id=t.inverter_id
+        WHERE t.ts >= %s
+          AND t.current_a IS NOT NULL
+    """
+    params = [bucket_seconds, bucket_seconds, start]
+    if inverter_id:
+        sql += " AND t.inverter_id = %s"
+        params.append(inverter_id)
+    sql += """
+        GROUP BY t.site_id, t.inverter_id, i.name,
+                 date_bin(make_interval(secs => %s), t.ts,
+                          TIMESTAMPTZ '2000-01-01 00:00:00+00')
+        ORDER BY ts
+    """
+    params.append(bucket_seconds)
+    return _clientize(_naive_utc(_query(sql, params), "ts"))
+
+
 def df_latest_reading() -> pd.DataFrame:
     df = _query(f"""
         SELECT {_TELEMETRY_SELECT}
