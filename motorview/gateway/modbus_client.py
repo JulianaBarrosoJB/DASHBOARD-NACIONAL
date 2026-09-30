@@ -13,6 +13,13 @@ from pymodbus.client import ModbusSerialClient
 
 log = logging.getLogger("motorview.modbus")
 
+# O CFW500 limita o telegrama Modbus RTU a 64 bytes. Em uma resposta
+# Function 03, 29 registradores ocupam 63 bytes no quadro RTU:
+# endereço + função + byte-count + 58 bytes de dados + CRC.
+# Manter este limite evita que um mapa esparso (ex.: P0002..P0070)
+# seja transformado em uma única leitura grande demais para o inversor.
+MAX_READ_REGISTERS = 29
+
 
 def _to_signed16(value: int) -> int:
     return value - 0x10000 if value >= 0x8000 else value
@@ -92,7 +99,7 @@ class InverterReader:
         block_start = block_end = sorted_addresses[0]
 
         for address in sorted_addresses[1:]:
-            if address - block_start + 1 <= 125:
+            if address - block_start + 1 <= MAX_READ_REGISTERS:
                 block_end = address
             else:
                 blocks.append((block_start, block_end))
