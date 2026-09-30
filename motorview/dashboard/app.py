@@ -1158,7 +1158,7 @@ elif page == "reports":
 
         dl1, dl2 = st.columns(2)
         dl1.download_button(
-            "Exportar CSV", show.to_csv(index=False).encode("utf-8"), icon=":material/download:",
+            "Exportar CSV detalhado", csv_bytes, icon=":material/download:",
             file_name=f"motorview_relatorio_{datetime.now(LOCAL_TZ):%Y%m%d_%H%M}.csv", mime="text/csv",
             width="stretch",
         )
