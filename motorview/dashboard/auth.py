@@ -54,6 +54,17 @@ def require_login():
 
     email = (_user_attr("email") or "").strip().lower()
     allowlist = config.authorized_emails()
+
+    if config.require_auth() and not allowlist:
+        # REQUIRE_AUTH=true + allowlist vazia (erro de configuração) = bloqueia
+        # todo mundo, em vez de deixar qualquer usuário autenticado entrar.
+        st.error(
+            "MOTORVIEW_REQUIRE_AUTH está ativado, mas AUTHORIZED_EMAILS está vazio ou "
+            "não configurado. Por segurança, o acesso fica bloqueado para todos até a "
+            "allowlist ser preenchida (veja o README do dashboard)."
+        )
+        st.stop()
+
     if allowlist and email not in allowlist:
         _render_access_denied(email)
         st.stop()
