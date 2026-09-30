@@ -497,117 +497,122 @@ page = st.session_state["page"]
 # ---------------------------------------------------------------------
 
 if page == "overview":
-    kpis = db.kpis_now()
-    latest = db.df_latest_reading()
-    parados = max(0, kpis["online"] - kpis["rodando"] - kpis["falhas_ativas"])
-    offline = kpis["inversores"] - kpis["online"]
-
-    hc1, hc2, hc3 = st.columns((1.1, 1.15, 1.15))
-
-    with hc1, st.container(key="hero_a"):
-        st.markdown(
-            f'<div class="card-title">{icon("precision_manufacturing")} Frota de motores</div>'
-            '<div class="card-sub">Estado atual de todos os inversores</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            "".join(f"<div class='mini-stat-row'><span>{lbl}</span><b style='color:{c};'>{v}</b></div>" for lbl, v, c in [
-                ("Cadastrados", kpis["inversores"], TEXT),
-                ("Online", kpis["online"], GREEN),
-                ("Rodando", kpis["rodando"], GREEN),
-                ("Parados", parados, MUTED),
-                ("Em falha", kpis["falhas_ativas"], RED if kpis["falhas_ativas"] else MUTED),
-                ("Offline", offline, MUTED if offline == 0 else RED),
-            ]),
-            unsafe_allow_html=True,
-        )
-
-    with hc2, st.container(key="hero_b"):
-        st.markdown(
-            f'<div class="card-title">{icon("bolt")} Corrente agora</div>'
-            '<div class="card-sub">Soma dos motores online</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            f'<div class="hero-num-val big">{kpis["corrente_total"]:.1f}<span style="font-size:16px;color:{MUTED};"> A</span></div>',
-            unsafe_allow_html=True,
-        )
-        if not latest.empty:
-            top = latest.sort_values("current_A", ascending=False).iloc[0]
+    @st.fragment(run_every="2s")
+    def live_overview():
+        kpis = db.kpis_now()
+        latest = db.df_latest_reading()
+        overview_data_status = db.database_status()
+        parados = max(0, kpis["online"] - kpis["rodando"] - kpis["falhas_ativas"])
+        offline = kpis["inversores"] - kpis["online"]
+    
+        hc1, hc2, hc3 = st.columns((1.1, 1.15, 1.15))
+    
+        with hc1, st.container(key="hero_a"):
             st.markdown(
-                f'<div style="color:{MUTED};font-size:12px;margin-top:6px;">Maior corrente: '
-                f'<b style="color:{TEXT};">{val_or_dash(top, "current_A", "{:.1f} A")}</b> ({top["name"]})</div>',
+                f'<div class="card-title">{icon("precision_manufacturing")} Frota de motores</div>'
+                '<div class="card-sub">Estado atual de todos os inversores</div>',
                 unsafe_allow_html=True,
             )
+            st.markdown(
+                "".join(f"<div class='mini-stat-row'><span>{lbl}</span><b style='color:{c};'>{v}</b></div>" for lbl, v, c in [
+                    ("Cadastrados", kpis["inversores"], TEXT),
+                    ("Online", kpis["online"], GREEN),
+                    ("Rodando", kpis["rodando"], GREEN),
+                    ("Parados", parados, MUTED),
+                    ("Em falha", kpis["falhas_ativas"], RED if kpis["falhas_ativas"] else MUTED),
+                    ("Offline", offline, MUTED if offline == 0 else RED),
+                ]),
+                unsafe_allow_html=True,
+            )
+    
+        with hc2, st.container(key="hero_b"):
+            st.markdown(
+                f'<div class="card-title">{icon("bolt")} Corrente agora</div>'
+                '<div class="card-sub">Soma dos motores online</div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                f'<div class="hero-num-val big">{kpis["corrente_total"]:.1f}<span style="font-size:16px;color:{MUTED};"> A</span></div>',
+                unsafe_allow_html=True,
+            )
+            if not latest.empty:
+                top = latest.sort_values("current_A", ascending=False).iloc[0]
+                st.markdown(
+                    f'<div style="color:{MUTED};font-size:12px;margin-top:6px;">Maior corrente: '
+                    f'<b style="color:{TEXT};">{val_or_dash(top, "current_A", "{:.1f} A")}</b> ({top["name"]})</div>',
+                    unsafe_allow_html=True,
+                )
+    
+        with hc3, st.container(key="hero_c"):
+            inv_df = db.df_inverters()
+            site_id = inv_df["site_id"].iloc[0] if not inv_df.empty else None
+            site_name = db.site_display_name(site_id)
+            gw = db.latest_gateway_status(site_id) if site_id else {"status": "desconhecido", "ts": None}
+            gw_ts = pd.to_datetime(gw["ts"], utc=True).tz_localize(None) if gw["ts"] else None
+            gw_dot = "dot-on" if gw["status"] == "online" else "dot-off"
+            data_dot = "dot-on" if overview_data_status["fresh"] else "dot-off"
+            st.markdown(
+                f'<div class="card-title">{icon("cell_tower")} Sistema</div>'
+                f'<div class="card-sub">Unidade: {site_name}</div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                f"<div class='mini-stat-row'><span><span class='{gw_dot}'></span>&nbsp; Gateway</span>"
+                f"<b>{gw['status']}</b></div>"
+                f"<div class='mini-stat-row'><span><span class='{data_dot}'></span>&nbsp; Dados na nuvem</span>"
+                f"<b>{'atualizados' if overview_data_status['fresh'] else 'sem atualização recente'}</b></div>",
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                f'<div style="color:{MUTED};font-size:12px;margin-top:6px;">Último status do gateway: {time_ago(gw_ts)}</div>',
+                unsafe_allow_html=True,
+            )
+    
+        st.write("")
+        disponibilidade_pct = (100 * kpis["online"] / kpis["inversores"]) if kpis["inversores"] else 0
+        operando_pct = (100 * kpis["rodando"] / kpis["online"]) if kpis["online"] else 0
+        sem_falha_pct = (100 * (kpis["online"] - kpis["falhas_ativas"]) / kpis["online"]) if kpis["online"] else 0
+        gg1, gg2, gg3 = st.columns(3)
+        with gg1, st.container(key="gauge_disp"):
+            st.plotly_chart(gauge_fig(disponibilidade_pct, "Disponibilidade da frota", BLUE),
+                              width="stretch", config={"displayModeBar": False})
+        with gg2, st.container(key="gauge_run"):
+            st.plotly_chart(gauge_fig(operando_pct, "Motores operando", GREEN),
+                              width="stretch", config={"displayModeBar": False})
+        with gg3, st.container(key="gauge_ok"):
+            st.plotly_chart(gauge_fig(sem_falha_pct, "Motores sem falha", ORANGE),
+                              width="stretch", config={"displayModeBar": False})
+    
+        st.write("")
+        st.markdown(f'<div class="card-title" style="font-size:15px;">{icon("dashboard")} Status por motor</div>',
+                     unsafe_allow_html=True)
+        if latest.empty:
+            empty_state("Aguardando dados.")
+        else:
+            cols = st.columns(3)
+            for i, (_, row) in enumerate(latest.iterrows()):
+                label, color, mi, dashed = motor_status(row)
+                border_style = "dashed" if dashed else "solid"
+                with cols[i % 3]:
+                    st.markdown(f"""
+                    <div class="card motor-card" style="border-left-color:{color};border-left-style:{border_style};">
+                      <div class="name">{row['name']}</div>
+                      <div class="sub">Unidade SUAPE</div>
+                      {status_badge_html(label, color, mi)}
+                      <div class="motor-grid">
+                        <div class="k">Corrente</div><div class="v">{val_or_dash(row, 'current_A', '{:.1f} A')}</div>
+                        <div class="k">Frequência</div><div class="v">{val_or_dash(row, 'frequency_Hz', '{:.1f} Hz')}</div>
+                        <div class="k">Rotação</div><div class="v">{val_or_dash(row, 'speed_rpm', '{:.0f} rpm')}</div>
+                        <div class="k">Tensão</div><div class="v">{val_or_dash(row, 'voltage_V', '{:.0f} V')}</div>
+                        <div class="k">Torque</div><div class="v">{val_or_dash(row, 'torque_pct', '{:.1f} %')}</div>
+                        <div class="k">Barramento CC</div><div class="v">{val_or_dash(row, 'dc_link_V', '{:.0f} V')}</div>
+                      </div>
+                      <div class="motor-last">Última leitura: {fmt_ts(row['ts'])}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+    
 
-    with hc3, st.container(key="hero_c"):
-        inv_df = db.df_inverters()
-        site_id = inv_df["site_id"].iloc[0] if not inv_df.empty else None
-        site_name = db.site_display_name(site_id)
-        gw = db.latest_gateway_status(site_id) if site_id else {"status": "desconhecido", "ts": None}
-        gw_ts = pd.to_datetime(gw["ts"], utc=True).tz_localize(None) if gw["ts"] else None
-        gw_dot = "dot-on" if gw["status"] == "online" else "dot-off"
-        data_dot = "dot-on" if data_status["fresh"] else "dot-off"
-        st.markdown(
-            f'<div class="card-title">{icon("cell_tower")} Sistema</div>'
-            f'<div class="card-sub">Unidade: {site_name}</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            f"<div class='mini-stat-row'><span><span class='{gw_dot}'></span>&nbsp; Gateway</span>"
-            f"<b>{gw['status']}</b></div>"
-            f"<div class='mini-stat-row'><span><span class='{data_dot}'></span>&nbsp; Dados na nuvem</span>"
-            f"<b>{'atualizados' if data_status['fresh'] else 'sem atualização recente'}</b></div>",
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            f'<div style="color:{MUTED};font-size:12px;margin-top:6px;">Último status do gateway: {time_ago(gw_ts)}</div>',
-            unsafe_allow_html=True,
-        )
-
-    st.write("")
-    disponibilidade_pct = (100 * kpis["online"] / kpis["inversores"]) if kpis["inversores"] else 0
-    operando_pct = (100 * kpis["rodando"] / kpis["online"]) if kpis["online"] else 0
-    sem_falha_pct = (100 * (kpis["online"] - kpis["falhas_ativas"]) / kpis["online"]) if kpis["online"] else 0
-    gg1, gg2, gg3 = st.columns(3)
-    with gg1, st.container(key="gauge_disp"):
-        st.plotly_chart(gauge_fig(disponibilidade_pct, "Disponibilidade da frota", BLUE),
-                          width="stretch", config={"displayModeBar": False})
-    with gg2, st.container(key="gauge_run"):
-        st.plotly_chart(gauge_fig(operando_pct, "Motores operando", GREEN),
-                          width="stretch", config={"displayModeBar": False})
-    with gg3, st.container(key="gauge_ok"):
-        st.plotly_chart(gauge_fig(sem_falha_pct, "Motores sem falha", ORANGE),
-                          width="stretch", config={"displayModeBar": False})
-
-    st.write("")
-    st.markdown(f'<div class="card-title" style="font-size:15px;">{icon("dashboard")} Status por motor</div>',
-                 unsafe_allow_html=True)
-    if latest.empty:
-        empty_state("Aguardando dados.")
-    else:
-        cols = st.columns(3)
-        for i, (_, row) in enumerate(latest.iterrows()):
-            label, color, mi, dashed = motor_status(row)
-            border_style = "dashed" if dashed else "solid"
-            with cols[i % 3]:
-                st.markdown(f"""
-                <div class="card motor-card" style="border-left-color:{color};border-left-style:{border_style};">
-                  <div class="name">{row['name']}</div>
-                  <div class="sub">Unidade SUAPE</div>
-                  {status_badge_html(label, color, mi)}
-                  <div class="motor-grid">
-                    <div class="k">Corrente</div><div class="v">{val_or_dash(row, 'current_A', '{:.1f} A')}</div>
-                    <div class="k">Frequência</div><div class="v">{val_or_dash(row, 'frequency_Hz', '{:.1f} Hz')}</div>
-                    <div class="k">Rotação</div><div class="v">{val_or_dash(row, 'speed_rpm', '{:.0f} rpm')}</div>
-                    <div class="k">Tensão</div><div class="v">{val_or_dash(row, 'voltage_V', '{:.0f} V')}</div>
-                    <div class="k">Torque</div><div class="v">{val_or_dash(row, 'torque_pct', '{:.1f} %')}</div>
-                    <div class="k">Barramento CC</div><div class="v">{val_or_dash(row, 'dc_link_V', '{:.0f} V')}</div>
-                  </div>
-                  <div class="motor-last">Última leitura: {fmt_ts(row['ts'])}</div>
-                </div>
-                """, unsafe_allow_html=True)
-
+    live_overview()
 
 # ---------------------------------------------------------------------
 # Motores (detalhe por inversor)
@@ -622,11 +627,15 @@ elif page == "motors":
             "Motor", options=inv_df["id"].tolist(),
             format_func=lambda i: inv_df.set_index("id").loc[i, "name"],
         )
-        latest = db.df_latest_reading()
-        row = latest[latest["inverter_id"] == inv_id]
-        if row.empty:
-            empty_state("Sem leituras para esse motor ainda.")
-        else:
+
+        @st.fragment(run_every="2s")
+        def live_motor_detail(inv_id: str):
+            latest = db.df_latest_reading()
+            row = latest[latest["inverter_id"] == inv_id]
+            if row.empty:
+                empty_state("Sem leituras para esse motor ainda.")
+                return
+
             row = row.iloc[0]
             label, color, mi, dashed = motor_status(row)
             fast = latest_current_fast(inv_id)
@@ -645,18 +654,18 @@ elif page == "motors":
 
             g1, g2, g3, g4, g5, g6 = st.columns(6)
             g1.markdown(stat_card("bolt", "Corrente", val_or_dash(row, "current_A", "{:.1f} A"), BLUE),
-                         unsafe_allow_html=True)
+                        unsafe_allow_html=True)
             g2.markdown(stat_card("speed", "Pico recente",
-                         f"{fast['current_max_A']:.1f} A" if fast and pd.notna(fast.get("current_max_A")) else "—", ORANGE),
-                         unsafe_allow_html=True)
+                        f"{fast['current_max_A']:.1f} A" if fast and pd.notna(fast.get("current_max_A")) else "—", ORANGE),
+                        unsafe_allow_html=True)
             g3.markdown(stat_card("bolt", "Tensão de saída", val_or_dash(row, "voltage_V", "{:.0f} V"), BLUE_2),
-                         unsafe_allow_html=True)
+                        unsafe_allow_html=True)
             g4.markdown(stat_card("power", "Barramento CC", val_or_dash(row, "dc_link_V", "{:.0f} V"), BLUE_2),
-                         unsafe_allow_html=True)
+                        unsafe_allow_html=True)
             g5.markdown(stat_card("graphic_eq", "Frequência", val_or_dash(row, "frequency_Hz", "{:.1f} Hz"), BLUE),
-                         unsafe_allow_html=True)
+                        unsafe_allow_html=True)
             g6.markdown(stat_card("rotate_right", "RPM", val_or_dash(row, "speed_rpm", "{:.0f}"), GREEN),
-                         unsafe_allow_html=True)
+                        unsafe_allow_html=True)
 
             st.write("")
             sw = row.get("status_word")
@@ -667,9 +676,10 @@ elif page == "motors":
             if pd.notna(last_code) and int(last_code or 0) > 0:
                 st.write("")
                 st.markdown(f'<div class="card-title">{icon("report_problem")} Última falha registrada</div>',
-                             unsafe_allow_html=True)
+                            unsafe_allow_html=True)
                 st.markdown(f"**F{int(last_code):04d}** - {row.get('last_fault_description') or ''}")
 
+        live_motor_detail(inv_id)
 
 # ---------------------------------------------------------------------
 # Corrente em tempo real (fast_current, com fallback pra telemetry)
