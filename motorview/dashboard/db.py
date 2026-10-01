@@ -22,7 +22,8 @@ INVERTER_DISPLAY_NAMES = {
     "inv02": "MOTOR 43",
 }
 SITE_DISPLAY_NAMES = {
-    "planta1": "SUAPE",
+    "suape": "SUAPE",
+    "planta1": "SUAPE",  # legado
 }
 
 
