@@ -45,6 +45,13 @@ class MotorViewDatabase:
         if self.conn is None or self.conn.closed:
             self.connect()
 
+    def compact_history(self):
+        """Executa a rotina server-side de compactação/retenção no Neon."""
+        self.ensure_connection()
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT motorview.compact_history()")
+        log.info("Compactação histórica executada com sucesso")
+
     def process_batch(self, items: list[dict]):
         """Grava um lote inteiro em uma única transação."""
         if not items:
