@@ -40,6 +40,9 @@ def load_config() -> dict:
             str(BASE_DIR / "data" / "ingest_spool.db"),
         ),
         "batch_size": max(10, int(os.getenv("MOTORVIEW_INGEST_BATCH_SIZE", "1000"))),
+        "compact_interval_seconds": max(
+            300, int(os.getenv("MOTORVIEW_COMPACT_INTERVAL_SECONDS", "3600"))
+        ),
         "log_level": os.getenv("MOTORVIEW_INGEST_LOG_LEVEL", "INFO").upper(),
     }
     return cfg
