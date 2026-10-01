@@ -335,8 +335,10 @@ def motor_status(row) -> tuple[str, str, str, bool]:
     stale = ts is None or pd.isna(ts) or (
         datetime.now(timezone.utc).replace(tzinfo=None) - ts > timedelta(minutes=2)
     )
-    if row.get("comm_error") or stale:
-        return "OFFLINE", MUTED, "wifi_off", True
+    if row.get("comm_error"):
+        return "SEM COMUNICAÇÃO", MUTED, "wifi_off", True
+    if stale:
+        return "SEM DADOS", MUTED, "cloud_off", True
     if (row.get("fault_code") or 0) > 0:
         return "FALHA", RED, "report", False
     bits = db.decode_status_word(row.get("status_word"))
@@ -746,6 +748,19 @@ elif page == "current":
                     .median()
                     .to_numpy()
                 )
+                if range_minutes <= 180:
+                    gap_limit_s = 5
+                elif range_minutes <= 360:
+                    gap_limit_s = 90
+                elif range_minutes <= 1440:
+                    gap_limit_s = 300
+                elif range_minutes <= 10080:
+                    gap_limit_s = 1200
+                else:
+                    gap_limit_s = 3600
+                missing = sub["ts_local"].diff().dt.total_seconds().gt(gap_limit_s)
+                sub.loc[missing, "current_display_A"] = pd.NA
+
                 fig.add_trace(go.Scatter(
                     x=sub["ts_local"], y=sub["current_display_A"], mode="lines",
                     name=name, line=dict(color=color, width=2.5),
@@ -788,8 +803,12 @@ elif page == "current":
                 return
             slow = slow.copy()
             slow["ts_local"] = series_to_local(slow["ts"])
+            slow = slow.sort_values(["inverter_id", "ts_local"])
+            gap = slow.groupby("inverter_id")["ts_local"].diff().dt.total_seconds().gt(15)
+            slow.loc[gap, "current_A"] = pd.NA
             fig = px.line(slow, x="ts_local", y="current_A", color="name",
                            color_discrete_sequence=CAT_COLORS, labels={"current_A": "Corrente (A)", "ts_local": ""})
+            fig.update_traces(connectgaps=False)
             st.plotly_chart(style_fig(fig, height=420), width="stretch", key=f"live_slow_{range_minutes}")
 
     live_current(range_minutes, selected)
@@ -827,12 +846,15 @@ elif page == "current":
                 trend_df.set_index("ts_local")
                 .groupby("inverter_id")["current_A"]
                 .resample(bucket).mean()
-                .dropna().reset_index()
+                .reset_index()
             )
-            agg = by_motor.groupby("ts_local", as_index=False)["current_A"].sum()
+            agg = (
+                by_motor.groupby("ts_local", as_index=False)["current_A"]
+                .sum(min_count=1)
+            )
         else:
             agg = (trend_df.set_index("ts_local").resample(bucket)["current_A"].mean()
-                   .dropna().reset_index())
+                   .reset_index())
 
         fig = px.area(
             agg, x="ts_local", y="current_A",
@@ -846,7 +868,7 @@ elif page == "current":
             width="stretch",
             key=f"trend_{trend_minutes}_{trend_inv_id or 'fleet'}",
         )
-        st.caption("Atualização automática a cada 5 s.")
+        st.caption("Atualização automática a cada 5 s. Intervalos sem monitoramento são exibidos como lacunas, nunca como motor parado.")
 
     current_trend(trend_minutes, trend_inv_id)
 
@@ -862,7 +884,9 @@ elif page == "faults":
     if latest.empty:
         empty_state("Sem leituras ainda.")
     else:
-        active_faults = latest[latest["fault_code"].fillna(0) > 0]
+        fresh_cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=2)
+        valid_now = latest[(latest["ts"] >= fresh_cutoff) & (~latest["comm_error"].fillna(False))]
+        active_faults = valid_now[valid_now["fault_code"].fillna(0) > 0]
         if not active_faults.empty:
             st.error(f"⚠ {len(active_faults)} motor(es) com falha ativa agora.", icon=":material/report:")
 
@@ -1018,8 +1042,14 @@ elif page == "history":
         else:
             source = source.copy()
             source["ts_local"] = series_to_local(source["ts"])
+            source = source.sort_values(["inverter_id", "ts_local"])
+            # Nunca ligar visualmente dois pontos separados por perda de monitoramento.
+            # A telemetria nominal é de ~2 s; 15 s representa várias leituras ausentes.
+            gap = source.groupby("inverter_id")["ts_local"].diff().dt.total_seconds().gt(15)
+            source.loc[gap, variable] = pd.NA
             fig = px.line(source, x="ts_local", y=variable, color="name", color_discrete_sequence=CAT_COLORS,
                            labels={variable: VAR_OPTIONS[variable], "ts_local": ""})
+            fig.update_traces(connectgaps=False)
             st.plotly_chart(style_fig(fig, height=380), width="stretch")
 
             st.markdown(f'<div class="card-title" style="font-size:14px;">{icon("table_rows")} Dados brutos</div>',
