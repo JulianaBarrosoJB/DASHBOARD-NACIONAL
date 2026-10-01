@@ -21,7 +21,7 @@ import psycopg
 
 log = logging.getLogger("motorview.cloud_failover")
 
-INVERTER_NAMES = {"inv01": "MOTOR 42", "inv02": "MOTOR 44"}
+INVERTER_NAMES = {"inv01": "MOTOR 42", "inv02": "MOTOR 43"}
 
 
 def _now_iso():
@@ -45,7 +45,7 @@ class CloudFailoverIngest:
         mc = cfg["mqtt"]
         self.client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION1,
-            client_id=mc.get("client_id", "motorview-cloud-failover-planta1"),
+            client_id=mc.get("client_id", "motorview-cloud-failover-suape"),
             clean_session=True,
             protocol=mqtt.MQTTv311,
         )
@@ -88,7 +88,7 @@ class CloudFailoverIngest:
     def _on_connect(self, client, userdata, flags, rc):
         self.connected = rc == 0
         if rc == 0:
-            client.subscribe(self.cfg["mqtt"].get("topic_filter", "motorview/planta1/#"), qos=1)
+            client.subscribe(self.cfg["mqtt"].get("topic_filter", "motorview/suape/#"), qos=1)
             log.info("Failover MQTT conectado")
         else:
             log.error("Failover MQTT conexão recusada rc=%s", rc)
