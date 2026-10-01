@@ -74,7 +74,7 @@ def failover_config() -> dict | None:
             "port": int(_get("MOTORVIEW_MQTT_PORT", "8883")),
             "username": str(keys["username"]),
             "password": str(keys["password"]),
-            "topic_filter": str(_get("MOTORVIEW_MQTT_TOPIC_FILTER", "motorview/planta1/#")),
-            "client_id": str(_get("MOTORVIEW_FAILOVER_CLIENT_ID", "motorview-cloud-failover-planta1")),
+            "topic_filter": str(_get("MOTORVIEW_MQTT_TOPIC_FILTER", "motorview/suape/#")),
+            "client_id": str(_get("MOTORVIEW_FAILOVER_CLIENT_ID", "motorview-cloud-failover-suape")),
         },
     }
