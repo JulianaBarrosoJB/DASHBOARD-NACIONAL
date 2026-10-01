@@ -17,18 +17,18 @@ offline_retry_seconds: 30        # slave offline: nova tentativa Modbus só a ca
 
 # Monitoramento de alta frequência para motores críticos.
 # A corrente bruta fica LOCAL no Raspberry a cada 100 ms.
-# O HiveMQ recebe somente resumo de 500 ms com min/max/média/última.
+# O HiveMQ recebe somente resumo de 1 s com min/max/média/última.
 fast_monitoring:
   enabled: true
   inverters:
     - inv01
   current_sample_interval_ms: 100
-  current_publish_interval_ms: 500
+  current_publish_interval_ms: 1000
   fault_poll_interval_ms: 250
   raw_flush_interval_ms: 1000
-  raw_retention_days: 7
+  raw_retention_days: 1
 
-site_id: planta1                # ID técnico estável; nome exibido ao cliente: SUAPE
+site_id: suape                # ID técnico estável; nome exibido ao cliente: SUAPE
 
 inverters:
   - id: inv01
@@ -49,13 +49,13 @@ mqtt:
   use_tls: true
   username: motorview-gateway
   password: "TROQUE-ESTA-SENHA"          # prefira MOTORVIEW_MQTT_PASSWORD via .env (veja README)
-  client_id: motorview-gateway-planta1   # único por dispositivo/gateway
+  client_id: motorview-gateway-suape   # único por dispositivo/gateway
   qos: 1
   keepalive_seconds: 30
 
 local_log:
   db_path: data/motorview_gateway.db     # log local (SQLite) de tudo que é lido, mesmo sem internet
-  retention_days: 90                     # linhas mais antigas que isso são limpas automaticamente
+  retention_days: 2                     # linhas mais antigas que isso são limpas automaticamente
 
 logging:
   level: INFO                             # DEBUG para depurar leituras Modbus/MQTT
