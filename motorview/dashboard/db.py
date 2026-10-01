@@ -19,7 +19,7 @@ _pool_lock = threading.Lock()
 # o histórico. Estes nomes são apenas a apresentação amigável ao cliente.
 INVERTER_DISPLAY_NAMES = {
     "inv01": "MOTOR 42",
-    "inv02": "MOTOR 44",
+    "inv02": "MOTOR 43",
 }
 SITE_DISPLAY_NAMES = {
     "planta1": "SUAPE",
