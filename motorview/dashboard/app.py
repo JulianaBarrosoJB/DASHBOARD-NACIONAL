@@ -468,8 +468,8 @@ with hcol3:
 
 if not data_status["connected"]:
     st.error(
-        "Não foi possível conectar ao banco de dados do MotorView. "
-        "Verifique o DATABASE_URL nos Secrets do Streamlit."
+        "Serviço de dados temporariamente indisponível. "
+        "Tente novamente em alguns instantes."
     )
     st.stop()
 
