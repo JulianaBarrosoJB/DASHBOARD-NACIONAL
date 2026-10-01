@@ -36,7 +36,7 @@ inverters:
     slave_id: 1
     register_map: registers_weg_cfw500.yaml
   - id: inv02
-    name: "MOTOR 44"
+    name: "MOTOR 43"
     slave_id: 2
     register_map: registers_weg_cfw500.yaml
   # adicione um bloco "- id: ..." por inversor no barramento RS-485
