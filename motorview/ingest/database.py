@@ -11,7 +11,7 @@ log = logging.getLogger("motorview.ingest.db")
 # relações e o histórico; apenas o nome exibido/cadastrado é corrigido.
 INVERTER_NAMES = {
     "inv01": "MOTOR 42",
-    "inv02": "MOTOR 44",
+    "inv02": "MOTOR 43",
 }
 
 
