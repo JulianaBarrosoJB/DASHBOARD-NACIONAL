@@ -102,8 +102,24 @@ class IngestWorker:
     def _database_loop(self):
         backoff = 1
         batch_size = self.cfg["batch_size"]
+        compact_interval = self.cfg["compact_interval_seconds"]
+        next_compact = time.monotonic() + 60
 
         while _running:
+            now = time.monotonic()
+
+            if now >= next_compact:
+                try:
+                    self.db.compact_history()
+                    next_compact = time.monotonic() + compact_interval
+                    backoff = 1
+                except Exception:
+                    self.log.exception(
+                        "Falha na compactação histórica; nova tentativa em 60s"
+                    )
+                    self.db.close()
+                    next_compact = time.monotonic() + 60
+
             batch = self.spool.pending(batch_size)
             if not batch:
                 time.sleep(0.2)
