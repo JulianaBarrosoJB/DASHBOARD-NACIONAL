@@ -388,6 +388,210 @@ def latest_current_fast(inverter_id: str) -> dict | None:
     return df.sort_values("ts").iloc[-1].to_dict()
 
 
+def _report_period(preset: str, start_date=None, start_time=None, end_date=None, end_time=None):
+    now = datetime.now(LOCAL_TZ)
+    if preset == "Hoje até agora":
+        start_local = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_local = now
+    elif preset == "Últimas 24 horas":
+        end_local = now
+        start_local = now - timedelta(hours=24)
+    elif preset == "Últimos 7 dias":
+        end_local = now
+        start_local = now - timedelta(days=7)
+    else:
+        start_local = datetime.combine(start_date, start_time, tzinfo=LOCAL_TZ)
+        end_local = datetime.combine(end_date, end_time, tzinfo=LOCAL_TZ)
+    return start_local, end_local
+
+
+def _report_filename(ext: str, motor_label: str, start_local: datetime, end_local: datetime) -> str:
+    tag = "TODOS" if motor_label == "Todos" else motor_label.replace(" ", "")
+    return (
+        f"MotorView_SUAPE_{tag}_"
+        f"{start_local:%Y%m%d_%H%M}-{end_local:%Y%m%d_%H%M}.{ext}"
+    )
+
+
+@st.dialog("Configurar relatório", width="large")
+def report_export_dialog(export_format: str):
+    inv_df = db.df_inverters()
+    motor_options = ["__all__"] + (inv_df["id"].tolist() if not inv_df.empty else [])
+
+    with st.form(f"report_form_{export_format}"):
+        motor_id = st.selectbox(
+            "Motor",
+            options=motor_options,
+            format_func=lambda value: (
+                "Todos"
+                if value == "__all__"
+                else inv_df.set_index("id").loc[value, "name"]
+            ),
+        )
+        preset = st.selectbox(
+            "Período",
+            ["Hoje até agora", "Últimas 24 horas", "Últimos 7 dias", "Personalizado"],
+        )
+
+        start_date = start_time = end_date = end_time = None
+        if preset == "Personalizado":
+            now = datetime.now(LOCAL_TZ)
+            d1, d2 = st.columns(2)
+            start_date = d1.date_input("Data inicial", value=now.date())
+            end_date = d2.date_input("Data final", value=now.date())
+            t1, t2 = st.columns(2)
+            start_time = t1.time_input("Hora inicial", value=now.replace(hour=0, minute=0, second=0, microsecond=0).time())
+            end_time = t2.time_input("Hora final", value=now.time().replace(microsecond=0))
+
+        csv_type = None
+        if export_format == "CSV":
+            csv_type = st.selectbox(
+                "Conteúdo do CSV",
+                ["Detalhado", "Resumo", "Eventos de falha"],
+            )
+
+        submitted = st.form_submit_button(
+            f"Gerar {export_format}",
+            type="primary",
+            use_container_width=True,
+        )
+
+    if submitted:
+        start_local, end_local = _report_period(
+            preset, start_date, start_time, end_date, end_time
+        )
+        if end_local <= start_local:
+            st.error("O horário final deve ser posterior ao horário inicial.")
+            return
+
+        inverter_id = None if motor_id == "__all__" else motor_id
+        motor_label = (
+            "Todos"
+            if motor_id == "__all__"
+            else inv_df.set_index("id").loc[motor_id, "name"]
+        )
+        start_utc = start_local.astimezone(timezone.utc)
+        end_utc = end_local.astimezone(timezone.utc)
+
+        with st.spinner("Gerando arquivo..."):
+            agg = db.df_report_summary_range(start_utc, end_utc, inverter_id)
+            faults = db.df_faults_range(start_utc, end_utc, inverter_id)
+            trend = db.df_report_current_trend_range(start_utc, end_utc, inverter_id)
+            daily = db.df_report_daily_range(start_utc, end_utc, inverter_id)
+
+            if export_format == "PDF":
+                if agg.empty:
+                    st.warning("Não há dados de telemetria no período selecionado.")
+                    return
+                pdf_kpis = {
+                    "motores": len(agg),
+                    "disponibilidade": float(agg["disponibilidade_pct"].mean()),
+                    "falhas": len(faults),
+                    "corrente_media": float(agg["corrente_media_A"].mean()),
+                    "corrente_max": float(agg["corrente_max_A"].max()),
+                }
+                payload = report_pdf.build_pdf(
+                    agg_df=agg,
+                    kpis=pdf_kpis,
+                    start_date=start_local,
+                    end_date=end_local,
+                    faults_df=faults if not faults.empty else None,
+                    current_trend_df=trend if not trend.empty else None,
+                    daily_df=daily if not daily.empty else None,
+                    site_name="SUAPE",
+                )
+                filename = _report_filename("pdf", motor_label, start_local, end_local)
+                mime = "application/pdf"
+            else:
+                if csv_type == "Eventos de falha":
+                    if faults.empty:
+                        st.warning("Não há eventos de falha no período selecionado.")
+                        return
+                    csv_df = faults[["ts", "name", "fault_code", "fault_description", "event_type"]].copy()
+                    csv_df["Data/hora (Brasília)"] = series_to_local(csv_df["ts"]).dt.strftime("%d/%m/%Y %H:%M:%S")
+                    csv_df["Unidade"] = "SUAPE"
+                    csv_df = csv_df[[
+                        "Data/hora (Brasília)", "Unidade", "name",
+                        "fault_code", "fault_description", "event_type",
+                    ]]
+                    csv_df.columns = [
+                        "Data/hora (Brasília)", "Unidade", "Motor",
+                        "Código da falha", "Descrição", "Evento",
+                    ]
+                elif csv_type == "Resumo":
+                    if agg.empty:
+                        st.warning("Não há dados no período selecionado.")
+                        return
+                    csv_df = agg[[
+                        "name", "corrente_media_A", "corrente_max_A",
+                        "tensao_media_V", "frequencia_media_Hz",
+                        "velocidade_media_rpm", "torque_medio_pct",
+                        "link_cc_medio_V", "disponibilidade_pct",
+                    ]].copy()
+                    csv_df.insert(0, "Unidade", "SUAPE")
+                    csv_df.columns = [
+                        "Unidade", "Motor", "Corrente média (A)", "Maior corrente (A)",
+                        "Tensão média (V)", "Frequência média (Hz)", "Velocidade média (rpm)",
+                        "Torque médio (%)", "Link CC médio (V)", "Disponibilidade (%)",
+                    ]
+                else:
+                    if trend.empty:
+                        st.warning("Não há dados de corrente no período selecionado.")
+                        return
+                    csv_df = trend.copy()
+                    csv_df["Data/hora (Brasília)"] = series_to_local(csv_df["ts"]).dt.strftime("%d/%m/%Y %H:%M:%S")
+                    csv_df["Unidade"] = "SUAPE"
+                    if not agg.empty:
+                        summary_cols = [
+                            "inverter_id", "corrente_media_A", "corrente_max_A",
+                            "tensao_media_V", "frequencia_media_Hz",
+                            "velocidade_media_rpm", "torque_medio_pct",
+                            "link_cc_medio_V", "disponibilidade_pct",
+                        ]
+                        csv_df = csv_df.merge(agg[summary_cols], on="inverter_id", how="left")
+                    csv_df = csv_df[[
+                        "Data/hora (Brasília)", "Unidade", "name",
+                        "current_avg_A", "current_max_A",
+                        "corrente_media_A", "corrente_max_A",
+                        "tensao_media_V", "frequencia_media_Hz",
+                        "velocidade_media_rpm", "torque_medio_pct",
+                        "link_cc_medio_V", "disponibilidade_pct",
+                    ]]
+                    csv_df.columns = [
+                        "Data/hora (Brasília)", "Unidade", "Motor",
+                        "Corrente média do intervalo (A)", "Pico do intervalo (A)",
+                        "Corrente média do período (A)", "Maior corrente do período (A)",
+                        "Tensão média (V)", "Frequência média (Hz)", "Velocidade média (rpm)",
+                        "Torque médio (%)", "Link CC médio (V)", "Disponibilidade (%)",
+                    ]
+
+                payload = csv_df.round(2).to_csv(
+                    index=False, sep=";", decimal=","
+                ).encode("utf-8-sig")
+                filename = _report_filename("csv", motor_label, start_local, end_local)
+                mime = "text/csv"
+
+        st.session_state[f"generated_{export_format.lower()}"] = {
+            "payload": payload,
+            "filename": filename,
+            "mime": mime,
+            "motor": motor_label,
+            "period": f"{start_local:%d/%m/%Y %H:%M} até {end_local:%d/%m/%Y %H:%M}",
+        }
+
+    result = st.session_state.get(f"generated_{export_format.lower()}")
+    if result:
+        st.success(f"Arquivo pronto · {result['motor']} · {result['period']}")
+        st.download_button(
+            f"Baixar {export_format}",
+            result["payload"],
+            file_name=result["filename"],
+            mime=result["mime"],
+            icon=":material/download:",
+            use_container_width=True,
+        )
+
+
 # ---------------------------------------------------------------------
 # Cabeçalho - mesmo layout do ProdView (logo + marca | status | relógio)
 # ---------------------------------------------------------------------
@@ -1127,123 +1331,65 @@ elif page == "connectivity":
 # ---------------------------------------------------------------------
 
 elif page == "reports":
-    st.markdown(f'<div class="card-title" style="font-size:15px;">{icon("summarize")} Resumo do período</div>',
-                 unsafe_allow_html=True)
-    days = st.slider("Período (dias)", 1, 90, 7, key="report_days")
+    st.markdown(
+        f'<div class="card-title" style="font-size:15px;">{icon("summarize")} Resumo do período</div>',
+        unsafe_allow_html=True,
+    )
+    days = st.slider("Prévia do período (dias)", 1, 90, 7, key="report_days")
 
     agg = db.df_report_summary(days=days)
     if agg.empty:
-        empty_state("Sem dados suficientes no período para gerar o relatório.")
+        empty_state("Sem dados suficientes no período para gerar a prévia.")
     else:
         faults = db.df_faults(days=days)
-        current_trend_df = db.df_report_current_trend(days=days)
-        daily_df = db.df_report_daily(days=days)
 
         r1, r2, r3, r4 = st.columns(4)
         r1.markdown(stat_card("inventory_2", "Motores", f"{len(agg)}", BLUE), unsafe_allow_html=True)
-        r2.markdown(stat_card("insights", "Disponibilidade", f"{agg['disponibilidade_pct'].mean():.1f}%", ORANGE),
-                    unsafe_allow_html=True)
-        r3.markdown(stat_card("bolt", "Maior corrente", f"{agg['corrente_max_A'].max():.1f} A", BLUE_2),
-                    unsafe_allow_html=True)
-        r4.markdown(stat_card("report_problem", "Eventos de falha", f"{len(faults)}", RED), unsafe_allow_html=True)
+        r2.markdown(
+            stat_card("insights", "Disponibilidade", f"{agg['disponibilidade_pct'].mean():.1f}%", ORANGE),
+            unsafe_allow_html=True,
+        )
+        r3.markdown(
+            stat_card("bolt", "Maior corrente", f"{agg['corrente_max_A'].max():.1f} A", BLUE_2),
+            unsafe_allow_html=True,
+        )
+        r4.markdown(
+            stat_card("report_problem", "Eventos de falha", f"{len(faults)}", RED),
+            unsafe_allow_html=True,
+        )
         st.write("")
 
-        gcol, bcol = st.columns((1, 1.6))
-        with gcol, st.container(key="gauge_disp_report"):
-            st.plotly_chart(gauge_fig(float(agg["disponibilidade_pct"].mean()), "Disponibilidade média", ORANGE),
-                              width="stretch", config={"displayModeBar": False})
-        with bcol:
-            bar_df = agg.sort_values("corrente_media_A", ascending=True)
-            fig_bar = px.bar(bar_df, x="corrente_media_A", y="name", orientation="h",
-                               labels={"corrente_media_A": "Corrente média (A)", "name": ""},
-                               color_discrete_sequence=[BLUE])
-            fig_bar.update_layout(showlegend=False)
-            st.plotly_chart(style_fig(fig_bar, height=210, legend=False), width="stretch")
-
-        show_cols = [
-            "name", "corrente_media_A", "corrente_max_A", "tensao_media_V",
-            "frequencia_media_Hz", "disponibilidade_pct",
+        show = agg[[
+            "name", "corrente_media_A", "corrente_max_A",
+            "tensao_media_V", "frequencia_media_Hz", "disponibilidade_pct",
+        ]].copy()
+        show.columns = [
+            "Motor", "Corrente média (A)", "Corrente máx. (A)",
+            "Tensão média (V)", "Frequência média (Hz)", "Disponibilidade (%)",
         ]
-        show = agg[show_cols].copy()
-        show.columns = ["Motor", "Corrente média (A)", "Corrente máx. (A)", "Tensão média (V)",
-                        "Frequência média (Hz)", "Disponibilidade (%)"]
         st.dataframe(show.round(2), width="stretch", hide_index=True)
 
-        start_date = (datetime.now(LOCAL_TZ) - timedelta(days=days)).date()
-        end_date = datetime.now(LOCAL_TZ).date()
-        pdf_kpis = {
-            "motores": len(agg),
-            "disponibilidade": float(agg["disponibilidade_pct"].mean()),
-            "falhas": len(faults),
-            "corrente_media": float(agg["corrente_media_A"].mean()),
-            "corrente_max": float(agg["corrente_max_A"].max()),
-        }
-        pdf_bytes = report_pdf.build_pdf(
-            agg_df=agg,
-            kpis=pdf_kpis,
-            start_date=start_date,
-            end_date=end_date,
-            faults_df=faults if not faults.empty else None,
-            current_trend_df=current_trend_df if not current_trend_df.empty else None,
-            daily_df=daily_df if not daily_df.empty else None,
-            site_name="SUAPE",
-        )
-
-        # CSV detalhado: uma linha por intervalo de corrente, acompanhado dos
-        # indicadores elétricos do período. Assim a exportação contém os dados
-        # usados nos gráficos, e não apenas a tabela-resumo da tela.
-        if not current_trend_df.empty:
-            csv_df = current_trend_df.copy()
-            csv_df["Data/hora (Brasília)"] = series_to_local(csv_df["ts"]).dt.strftime("%d/%m/%Y %H:%M:%S")
-            summary_cols = [
-                "inverter_id", "corrente_media_A", "corrente_max_A",
-                "tensao_media_V", "frequencia_media_Hz", "velocidade_media_rpm",
-                "torque_medio_pct", "link_cc_medio_V", "disponibilidade_pct",
-            ]
-            summary_csv = agg[summary_cols].copy()
-            fault_counts = (
-                faults.groupby("inverter_id").size().rename("eventos_falha").reset_index()
-                if not faults.empty else pd.DataFrame(columns=["inverter_id", "eventos_falha"])
-            )
-            summary_csv = summary_csv.merge(fault_counts, on="inverter_id", how="left")
-            summary_csv["eventos_falha"] = summary_csv["eventos_falha"].fillna(0).astype(int)
-            csv_df = csv_df.merge(summary_csv, on="inverter_id", how="left")
-            csv_df["Unidade"] = "SUAPE"
-            csv_df = csv_df[[
-                "Data/hora (Brasília)", "Unidade", "name",
-                "current_avg_A", "current_max_A",
-                "corrente_media_A", "corrente_max_A",
-                "tensao_media_V", "frequencia_media_Hz", "velocidade_media_rpm",
-                "torque_medio_pct", "link_cc_medio_V", "disponibilidade_pct",
-                "eventos_falha",
-            ]]
-            csv_df.columns = [
-                "Data/hora (Brasília)", "Unidade", "Motor",
-                "Corrente média do intervalo (A)", "Pico do intervalo (A)",
-                "Corrente média do período (A)", "Maior corrente do período (A)",
-                "Tensão média (V)", "Frequência média (Hz)", "Velocidade média (rpm)",
-                "Torque médio (%)", "Link CC médio (V)", "Disponibilidade (%)",
-                "Eventos de falha no período",
-            ]
-        else:
-            csv_df = show.copy()
-            csv_df.insert(0, "Unidade", "SUAPE")
-
-        csv_bytes = csv_df.round(2).to_csv(
-            index=False, sep=";", decimal=","
-        ).encode("utf-8-sig")
-
-        dl1, dl2 = st.columns(2)
-        dl1.download_button(
-            "Exportar CSV detalhado", csv_bytes, icon=":material/download:",
-            file_name=f"motorview_relatorio_{datetime.now(LOCAL_TZ):%Y%m%d_%H%M}.csv", mime="text/csv",
-            width="stretch",
-        )
-        dl2.download_button(
-            "Exportar PDF completo", pdf_bytes, icon=":material/picture_as_pdf:",
-            file_name=f"motorview_relatorio_{datetime.now(LOCAL_TZ):%Y%m%d_%H%M}.pdf", mime="application/pdf",
-            width="stretch",
-        )
+    st.write("")
+    st.markdown(
+        f'<div class="card-title" style="font-size:15px;">{icon("tune")} Exportação personalizada</div>'
+        f'<div class="card-sub">Escolha motor, período e horário antes de gerar o arquivo.</div>',
+        unsafe_allow_html=True,
+    )
+    exp1, exp2 = st.columns(2)
+    if exp1.button(
+        "Gerar relatório PDF",
+        icon=":material/picture_as_pdf:",
+        use_container_width=True,
+        key="open_pdf_report_dialog",
+    ):
+        report_export_dialog("PDF")
+    if exp2.button(
+        "Exportar CSV",
+        icon=":material/download:",
+        use_container_width=True,
+        key="open_csv_report_dialog",
+    ):
+        report_export_dialog("CSV")
 
 st.markdown(
     f"<div style='text-align:center;color:{MUTED};font-size:12px;padding:24px 0 8px;'>"
