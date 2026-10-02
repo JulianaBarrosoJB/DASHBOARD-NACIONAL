@@ -252,9 +252,11 @@ def build_pdf(
     ]))
     story += [header, Spacer(1,12)]
 
+    start_fmt = start_date.strftime("%d/%m/%Y %H:%M") if hasattr(start_date, "hour") else start_date.strftime("%d/%m/%Y")
+    end_fmt = end_date.strftime("%d/%m/%Y %H:%M") if hasattr(end_date, "hour") else end_date.strftime("%d/%m/%Y")
     period_cell = [
         Paragraph("PERÍODO ANALISADO", period_lbl),
-        Paragraph(f"{start_date.strftime('%d/%m/%Y')} - {end_date.strftime('%d/%m/%Y')}", period_val),
+        Paragraph(f"{start_fmt} - {end_fmt}", period_val),
     ]
     gen_cell = Paragraph(f"Gerado em<br/><b>{datetime.now(LOCAL_TZ).strftime('%d/%m/%Y %H:%M')}</b>", period_gen)
     period_row = Table([[period_cell, gen_cell]], colWidths=[CONTENT_WIDTH-55*mm, 55*mm])
