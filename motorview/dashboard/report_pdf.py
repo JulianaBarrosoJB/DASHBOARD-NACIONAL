@@ -368,7 +368,7 @@ def build_pdf(
         story.append(PageBreak())
         story.append(Paragraph("Tendência de corrente por motor", h2))
         story.append(Paragraph(
-            "Cada motor é apresentado individualmente. Lacunas representam intervalos sem dados de monitoramento.",
+            "Lacunas representam intervalos sem dados de monitoramento.",
             sub,
         ))
         if current_trend_df is not None and not current_trend_df.empty:
