@@ -413,6 +413,36 @@ def _report_filename(ext: str, motor_label: str, start_local: datetime, end_loca
     )
 
 
+def _csv_ptbr_bytes(df: pd.DataFrame) -> bytes:
+    """Gera CSV compatível com Excel pt-BR.
+
+    Valores SQL agregados podem chegar como Decimal/object; nesse caso o
+    pandas não aplica decimal="," corretamente e o Excel interpreta o ponto
+    como separador de milhar. Convertemos colunas numéricas explicitamente
+    para float antes da exportação.
+    """
+    out = df.copy()
+    text_cols = {
+        "Data/hora (Brasília)", "Unidade", "Motor",
+        "Descrição", "Evento",
+    }
+    for col in out.columns:
+        if col in text_cols:
+            continue
+        converted = pd.to_numeric(out[col], errors="coerce")
+        # Só substitui quando há pelo menos um valor numérico real.
+        if converted.notna().any():
+            out[col] = converted.astype(float)
+
+    return out.to_csv(
+        index=False,
+        sep=";",
+        decimal=",",
+        float_format="%.2f",
+        lineterminator="\n",
+    ).encode("utf-8-sig")
+
+
 @st.dialog("Configurar relatório", width="large")
 def report_export_dialog(export_format: str):
     inv_df = db.df_inverters()
@@ -588,9 +618,7 @@ def report_export_dialog(export_format: str):
                         "Torque médio (%)", "Link CC médio (V)", "Disponibilidade (%)",
                     ]
 
-                payload = csv_df.round(2).to_csv(
-                    index=False, sep=";", decimal=","
-                ).encode("utf-8-sig")
+                payload = _csv_ptbr_bytes(csv_df)
                 filename = _report_filename("csv", motor_label, start_local, end_local)
                 mime = "text/csv"
 
