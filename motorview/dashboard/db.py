@@ -402,7 +402,13 @@ def df_report_current_trend_range(
     end: datetime,
     inverter_id: str | None = None,
 ) -> pd.DataFrame:
-    """Série de corrente reduzida no PostgreSQL para um intervalo exato."""
+    """Série de corrente por motor para o relatório.
+
+    Usa a telemetria comum como fonte-base porque ela existe para todos os
+    inversores. O current_fast é propositalmente habilitado apenas em motores
+    selecionados e, se fosse usado sozinho, faria relatórios "Todos" omitirem
+    motores sem aquisição rápida.
+    """
     seconds = max((end - start).total_seconds(), 1)
     if seconds <= 86400:
         bucket = "1 minute"
@@ -415,23 +421,27 @@ def df_report_current_trend_range(
 
     sql = f"""
         SELECT
-            f.site_id,
-            f.inverter_id,
+            t.site_id,
+            t.inverter_id,
             i.name,
-            date_bin(INTERVAL '{bucket}', f.ts,
+            date_bin(INTERVAL '{bucket}', t.ts,
                      TIMESTAMPTZ '2000-01-01 00:00:00+00') AS ts,
-            AVG(f.current_avg_a) AS "current_avg_A",
-            MAX(f.current_max_a) AS "current_max_A"
-        FROM motorview.current_fast f
+            AVG(t.current_a) FILTER (WHERE NOT t.comm_error) AS "current_avg_A",
+            MAX(t.current_a) FILTER (WHERE NOT t.comm_error) AS "current_max_A"
+        FROM motorview.telemetry t
         JOIN motorview.inverters i
-          ON i.site_id=f.site_id AND i.inverter_id=f.inverter_id
-        WHERE f.ts >= %s AND f.ts <= %s
+          ON i.site_id=t.site_id AND i.inverter_id=t.inverter_id
+        WHERE t.ts >= %s AND t.ts <= %s
+          AND t.current_a IS NOT NULL
     """
     params = [start, end]
     if inverter_id:
-        sql += " AND f.inverter_id = %s"
+        sql += " AND t.inverter_id = %s"
         params.append(inverter_id)
-    sql += " GROUP BY f.site_id, f.inverter_id, i.name, 4 ORDER BY 4, f.inverter_id"
+    sql += """
+        GROUP BY t.site_id, t.inverter_id, i.name, 4
+        ORDER BY 4, t.inverter_id
+    """
     return _clientize(_naive_utc(_query(sql, params), "ts"))
 
 
