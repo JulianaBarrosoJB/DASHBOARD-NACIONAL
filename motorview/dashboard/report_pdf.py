@@ -141,33 +141,22 @@ def _chart_current_trend(df: pd.DataFrame) -> Image:
     return _fig_to_image(fig)
 
 
-def _chart_current_area(df: pd.DataFrame) -> Image:
-    """Tendência suavizada no mesmo espírito visual do dashboard.
+def _chart_current_area(df: pd.DataFrame, label: str | None = None) -> Image:
+    """Tendência suavizada de um único motor.
 
-    Mantém paradas reais em zero, suaviza pequenas oscilações e quebra a
-    linha quando existe lacuna de aquisição.
+    O dataframe deve estar filtrado para um motor. Paradas reais continuam
+    em zero e lacunas de aquisição quebram visualmente a linha.
     """
     data = df.copy()
     data["ts"] = pd.to_datetime(data["ts"], utc=True).dt.tz_convert(LOCAL_TZ)
-    data = data.sort_values(["inverter_id", "ts"])
+    data = data.sort_values("ts")
+    series = pd.to_numeric(
+        data.set_index("ts")["current_avg_A"], errors="coerce"
+    ).astype(float)
 
-    if data["inverter_id"].nunique() > 1:
-        pivot = data.pivot_table(
-            index="ts",
-            columns="inverter_id",
-            values="current_avg_A",
-            aggfunc="mean",
-        ).sort_index()
-        series = pivot.sum(axis=1, min_count=1)
-        label = "Soma da frota"
-    else:
-        series = data.set_index("ts")["current_avg_A"].sort_index()
+    if label is None:
         label = data["name"].iloc[0] if "name" in data.columns and not data.empty else "Motor"
 
-    series = pd.to_numeric(series, errors="coerce").astype(float)
-
-    # Suavização leve: mediana móvel remove serrilhado/pontos espúrios sem
-    # apagar uma parada real sustentada em zero.
     if len(series) >= 5:
         smooth = series.rolling(window=5, center=True, min_periods=1).median()
         smooth = smooth.rolling(window=3, center=True, min_periods=1).mean()
@@ -176,7 +165,6 @@ def _chart_current_area(df: pd.DataFrame) -> Image:
     else:
         smooth = series.copy()
 
-    # Quebra explícita em intervalos sem aquisição.
     if len(smooth) >= 2:
         diffs = smooth.index.to_series().diff().dropna().dt.total_seconds()
         typical = float(diffs.median()) if not diffs.empty else 0.0
@@ -190,17 +178,12 @@ def _chart_current_area(df: pd.DataFrame) -> Image:
     y = smooth.to_numpy(dtype=float)
 
     ax.plot(
-        x, y,
-        color=HEX_BLUE,
-        linewidth=2.15,
-        solid_capstyle="round",
-        solid_joinstyle="round",
-        antialiased=True,
-        label=label,
+        x, y, color=HEX_BLUE, linewidth=2.15,
+        solid_capstyle="round", solid_joinstyle="round",
+        antialiased=True, label=label,
     )
     ax.fill_between(x, y, 0, where=~pd.isna(y), color=HEX_BLUE, alpha=0.075)
 
-    # Escala com folga para a linha não encostar no topo.
     finite = smooth.dropna()
     ymax = float(finite.max()) if not finite.empty else 1.0
     ax.set_ylim(0, max(ymax * 1.14, 1.0))
@@ -220,20 +203,12 @@ def _chart_current_area(df: pd.DataFrame) -> Image:
     ax.grid(axis="both", color=HEX_BORDER, linewidth=0.55, alpha=0.8)
     ax.set_axisbelow(True)
     ax.tick_params(axis="both", labelsize=8.2, length=0)
-
-    # Legenda fora da área útil para não cobrir a própria curva.
     ax.legend(
-        frameon=False,
-        fontsize=8,
-        loc="lower left",
-        bbox_to_anchor=(0, 1.01),
-        borderaxespad=0,
-        handlelength=2.2,
+        frameon=False, fontsize=8, loc="lower left",
+        bbox_to_anchor=(0, 1.01), borderaxespad=0, handlelength=2.2,
     )
-
     fig.tight_layout(pad=0.8)
     return _fig_to_image(fig)
-
 
 def _chart_faults_by_motor(faults_df: pd.DataFrame) -> Image:
     agg = faults_df.groupby("name", as_index=False).size().rename(columns={"size": "eventos"})
@@ -391,21 +366,56 @@ def build_pdf(
         story.append(KeepTogether([Paragraph("Disponibilidade por motor", h2), _chart_availability_by_motor(agg_df)]))
 
         story.append(PageBreak())
-        story.append(Paragraph("Tendência de corrente", h2))
+        story.append(Paragraph("Tendência de corrente por motor", h2))
         story.append(Paragraph(
-            "Comportamento da corrente ao longo do período selecionado. "
-            "Quando o relatório inclui mais de um motor, o gráfico apresenta a soma da frota. "
-            "Lacunas representam intervalos sem dados de monitoramento.",
+            "Cada motor é apresentado individualmente. Lacunas representam intervalos sem dados de monitoramento.",
             sub,
         ))
         if current_trend_df is not None and not current_trend_df.empty:
-            story += [Spacer(1,4), _chart_current_area(current_trend_df)]
+            motors = (
+                current_trend_df[["inverter_id", "name"]]
+                .drop_duplicates()
+                .sort_values("name")
+            )
+            for pos, (_, motor) in enumerate(motors.iterrows()):
+                motor_df = current_trend_df[
+                    current_trend_df["inverter_id"] == motor["inverter_id"]
+                ].copy()
+                story.append(KeepTogether([
+                    Paragraph(str(motor["name"]), h2),
+                    _chart_current_area(motor_df, str(motor["name"])),
+                ]))
+
+                summary_row = agg_df[
+                    agg_df["inverter_id"] == motor["inverter_id"]
+                ]
+                if not summary_row.empty:
+                    r = summary_row.iloc[0]
+                    motor_data = [[
+                        "Corrente média", "Maior pico", "Tensão média",
+                        "Frequência média", "Disponibilidade",
+                    ], [
+                        _fmt(r.get("corrente_media_A"), suffix=" A"),
+                        _fmt(r.get("corrente_max_A"), suffix=" A"),
+                        _fmt(r.get("tensao_media_V"), pattern="{:.0f}", suffix=" V"),
+                        _fmt(r.get("frequencia_media_Hz"), suffix=" Hz"),
+                        _fmt(r.get("disponibilidade_pct"), suffix="%"),
+                    ]]
+                    story.append(_standard_table(
+                        motor_data,
+                        [35.6*mm, 35.6*mm, 35.6*mm, 35.6*mm, 35.6*mm],
+                        font_size=7.8,
+                    ))
+
+                if pos < len(motors) - 1:
+                    story.append(Spacer(1, 10))
         else:
             story.append(Paragraph("Sem série de corrente disponível para o período.", sub))
 
+        story.append(PageBreak())
         story.append(Paragraph("Corrente média e picos por intervalo", h2))
         story.append(Paragraph(
-            "Linha contínua: corrente média por intervalo. Linha tracejada: maior pico capturado no mesmo intervalo.",
+            "Visão comparativa: linha contínua para corrente média e linha tracejada para o maior pico capturado no intervalo.",
             sub,
         ))
         if current_trend_df is not None and not current_trend_df.empty:
