@@ -142,11 +142,10 @@ def _chart_current_trend(df: pd.DataFrame) -> Image:
 
 
 def _chart_current_area(df: pd.DataFrame) -> Image:
-    """Gráfico de tendência no estilo do dashboard.
+    """Tendência suavizada no mesmo espírito visual do dashboard.
 
-    Para um único motor, usa a corrente média agregada daquele motor.
-    Para vários motores, soma por instante (frota). Lacunas permanecem
-    sem linha, evitando interpretar ausência de dados como corrente zero.
+    Mantém paradas reais em zero, suaviza pequenas oscilações e quebra a
+    linha quando existe lacuna de aquisição.
     """
     data = df.copy()
     data["ts"] = pd.to_datetime(data["ts"], utc=True).dt.tz_convert(LOCAL_TZ)
@@ -162,43 +161,77 @@ def _chart_current_area(df: pd.DataFrame) -> Image:
         series = pivot.sum(axis=1, min_count=1)
         label = "Soma da frota"
     else:
-        series = (
-            data.set_index("ts")["current_avg_A"]
-            .sort_index()
-        )
+        series = data.set_index("ts")["current_avg_A"].sort_index()
         label = data["name"].iloc[0] if "name" in data.columns and not data.empty else "Motor"
 
-    # Se houver uma lacuna muito maior que o passo típico da série, injeta NaN
-    # para forçar quebra visual no matplotlib.
-    if len(series) >= 2:
-        diffs = series.index.to_series().diff().dropna().dt.total_seconds()
-        typical = diffs.median() if not diffs.empty else 0
-        gap_limit = max(typical * 2.5, 90)
-        parts_x, parts_y = [], []
-        prev = None
-        for ts, val in series.items():
-            if prev is not None and (ts - prev).total_seconds() > gap_limit:
-                parts_x.append(ts)
-                parts_y.append(float("nan"))
-            parts_x.append(ts)
-            parts_y.append(val)
-            prev = ts
-    else:
-        parts_x = list(series.index)
-        parts_y = list(series.values)
+    series = pd.to_numeric(series, errors="coerce").astype(float)
 
-    fig, ax = plt.subplots(figsize=(7.0, 2.8))
-    ax.plot(parts_x, parts_y, color=HEX_BLUE, linewidth=2.0, label=label)
-    ax.fill_between(parts_x, parts_y, 0, color=HEX_BLUE, alpha=0.10)
-    ax.set_ylim(bottom=0)
-    ax.set_ylabel("Corrente (A)")
+    # Suavização leve: mediana móvel remove serrilhado/pontos espúrios sem
+    # apagar uma parada real sustentada em zero.
+    if len(series) >= 5:
+        smooth = series.rolling(window=5, center=True, min_periods=1).median()
+        smooth = smooth.rolling(window=3, center=True, min_periods=1).mean()
+    elif len(series) >= 3:
+        smooth = series.rolling(window=3, center=True, min_periods=1).median()
+    else:
+        smooth = series.copy()
+
+    # Quebra explícita em intervalos sem aquisição.
+    if len(smooth) >= 2:
+        diffs = smooth.index.to_series().diff().dropna().dt.total_seconds()
+        typical = float(diffs.median()) if not diffs.empty else 0.0
+        gap_limit = max(typical * 2.5, 90.0)
+        smooth = smooth.copy()
+        gap_mask = smooth.index.to_series().diff().dt.total_seconds().gt(gap_limit).to_numpy()
+        smooth.iloc[gap_mask] = float("nan")
+
+    fig, ax = plt.subplots(figsize=(7.15, 2.65))
+    x = smooth.index.to_pydatetime()
+    y = smooth.to_numpy(dtype=float)
+
+    ax.plot(
+        x, y,
+        color=HEX_BLUE,
+        linewidth=2.15,
+        solid_capstyle="round",
+        solid_joinstyle="round",
+        antialiased=True,
+        label=label,
+    )
+    ax.fill_between(x, y, 0, where=~pd.isna(y), color=HEX_BLUE, alpha=0.075)
+
+    # Escala com folga para a linha não encostar no topo.
+    finite = smooth.dropna()
+    ymax = float(finite.max()) if not finite.empty else 1.0
+    ax.set_ylim(0, max(ymax * 1.14, 1.0))
+    ax.set_ylabel("Corrente (A)", labelpad=8)
     ax.set_xlabel("")
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%d/%m\n%H:%M", tz=LOCAL_TZ))
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.grid(axis="both", color=HEX_BORDER, linewidth=0.6)
+
+    locator = mdates.AutoDateLocator(minticks=4, maxticks=7, tz=LOCAL_TZ)
+    formatter = mdates.ConciseDateFormatter(locator, tz=LOCAL_TZ)
+    formatter.formats = ["%Y", "%b", "%d/%m", "%H:%M", "%H:%M", "%S"]
+    formatter.zero_formats = ["", "%Y", "%d/%m", "%d/%m", "%H:%M", "%H:%M"]
+    formatter.offset_formats = ["", "%Y", "%Y", "%d/%m/%Y", "%d/%m/%Y", "%d/%m/%Y %H:%M"]
+    ax.xaxis.set_major_locator(locator)
+    ax.xaxis.set_major_formatter(formatter)
+
+    ax.spines[["top", "right", "left"]].set_visible(False)
+    ax.spines["bottom"].set_color(HEX_BORDER)
+    ax.grid(axis="both", color=HEX_BORDER, linewidth=0.55, alpha=0.8)
     ax.set_axisbelow(True)
-    ax.legend(frameon=False, fontsize=8, loc="upper left")
-    fig.tight_layout()
+    ax.tick_params(axis="both", labelsize=8.2, length=0)
+
+    # Legenda fora da área útil para não cobrir a própria curva.
+    ax.legend(
+        frameon=False,
+        fontsize=8,
+        loc="lower left",
+        bbox_to_anchor=(0, 1.01),
+        borderaxespad=0,
+        handlelength=2.2,
+    )
+
+    fig.tight_layout(pad=0.8)
     return _fig_to_image(fig)
 
 
