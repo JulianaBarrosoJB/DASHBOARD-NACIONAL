@@ -415,11 +415,25 @@ def build_pdf(
         story.append(PageBreak())
         story.append(Paragraph("Corrente média e picos por intervalo", h2))
         story.append(Paragraph(
-            "Visão comparativa: linha contínua para corrente média e linha tracejada para o maior pico capturado no intervalo.",
+            "Linha contínua: corrente média por intervalo. Linha tracejada: maior pico capturado no mesmo intervalo.",
             sub,
         ))
         if current_trend_df is not None and not current_trend_df.empty:
-            story += [Spacer(1,4), _chart_current_trend(current_trend_df)]
+            motors_peak = (
+                current_trend_df[["inverter_id", "name"]]
+                .drop_duplicates()
+                .sort_values("name")
+            )
+            for pos, (_, motor) in enumerate(motors_peak.iterrows()):
+                motor_df = current_trend_df[
+                    current_trend_df["inverter_id"] == motor["inverter_id"]
+                ].copy()
+                story.append(KeepTogether([
+                    Paragraph(str(motor["name"]), h2),
+                    _chart_current_trend(motor_df),
+                ]))
+                if pos < len(motors_peak) - 1:
+                    story.append(Spacer(1, 10))
         else:
             story.append(Paragraph("Sem série de corrente disponível para o período.", sub))
 
