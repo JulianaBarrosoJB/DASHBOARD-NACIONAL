@@ -141,6 +141,67 @@ def _chart_current_trend(df: pd.DataFrame) -> Image:
     return _fig_to_image(fig)
 
 
+def _chart_current_area(df: pd.DataFrame) -> Image:
+    """Gráfico de tendência no estilo do dashboard.
+
+    Para um único motor, usa a corrente média agregada daquele motor.
+    Para vários motores, soma por instante (frota). Lacunas permanecem
+    sem linha, evitando interpretar ausência de dados como corrente zero.
+    """
+    data = df.copy()
+    data["ts"] = pd.to_datetime(data["ts"], utc=True).dt.tz_convert(LOCAL_TZ)
+    data = data.sort_values(["inverter_id", "ts"])
+
+    if data["inverter_id"].nunique() > 1:
+        pivot = data.pivot_table(
+            index="ts",
+            columns="inverter_id",
+            values="current_avg_A",
+            aggfunc="mean",
+        ).sort_index()
+        series = pivot.sum(axis=1, min_count=1)
+        label = "Soma da frota"
+    else:
+        series = (
+            data.set_index("ts")["current_avg_A"]
+            .sort_index()
+        )
+        label = data["name"].iloc[0] if "name" in data.columns and not data.empty else "Motor"
+
+    # Se houver uma lacuna muito maior que o passo típico da série, injeta NaN
+    # para forçar quebra visual no matplotlib.
+    if len(series) >= 2:
+        diffs = series.index.to_series().diff().dropna().dt.total_seconds()
+        typical = diffs.median() if not diffs.empty else 0
+        gap_limit = max(typical * 2.5, 90)
+        parts_x, parts_y = [], []
+        prev = None
+        for ts, val in series.items():
+            if prev is not None and (ts - prev).total_seconds() > gap_limit:
+                parts_x.append(ts)
+                parts_y.append(float("nan"))
+            parts_x.append(ts)
+            parts_y.append(val)
+            prev = ts
+    else:
+        parts_x = list(series.index)
+        parts_y = list(series.values)
+
+    fig, ax = plt.subplots(figsize=(7.0, 2.8))
+    ax.plot(parts_x, parts_y, color=HEX_BLUE, linewidth=2.0, label=label)
+    ax.fill_between(parts_x, parts_y, 0, color=HEX_BLUE, alpha=0.10)
+    ax.set_ylim(bottom=0)
+    ax.set_ylabel("Corrente (A)")
+    ax.set_xlabel("")
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%d/%m\n%H:%M", tz=LOCAL_TZ))
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.grid(axis="both", color=HEX_BORDER, linewidth=0.6)
+    ax.set_axisbelow(True)
+    ax.legend(frameon=False, fontsize=8, loc="upper left")
+    fig.tight_layout()
+    return _fig_to_image(fig)
+
+
 def _chart_faults_by_motor(faults_df: pd.DataFrame) -> Image:
     agg = faults_df.groupby("name", as_index=False).size().rename(columns={"size": "eventos"})
     agg = agg.sort_values("eventos", ascending=True)
@@ -297,7 +358,19 @@ def build_pdf(
         story.append(KeepTogether([Paragraph("Disponibilidade por motor", h2), _chart_availability_by_motor(agg_df)]))
 
         story.append(PageBreak())
-        story.append(Paragraph("Tendência de corrente no período", h2))
+        story.append(Paragraph("Tendência de corrente", h2))
+        story.append(Paragraph(
+            "Comportamento da corrente ao longo do período selecionado. "
+            "Quando o relatório inclui mais de um motor, o gráfico apresenta a soma da frota. "
+            "Lacunas representam intervalos sem dados de monitoramento.",
+            sub,
+        ))
+        if current_trend_df is not None and not current_trend_df.empty:
+            story += [Spacer(1,4), _chart_current_area(current_trend_df)]
+        else:
+            story.append(Paragraph("Sem série de corrente disponível para o período.", sub))
+
+        story.append(Paragraph("Corrente média e picos por intervalo", h2))
         story.append(Paragraph(
             "Linha contínua: corrente média por intervalo. Linha tracejada: maior pico capturado no mesmo intervalo.",
             sub,
