@@ -1405,6 +1405,7 @@ elif page == "reports":
         use_container_width=True,
         key="open_pdf_report_dialog",
     ):
+        st.session_state.pop("generated_pdf", None)
         report_export_dialog("PDF")
     if exp2.button(
         "Exportar CSV",
@@ -1412,6 +1413,7 @@ elif page == "reports":
         use_container_width=True,
         key="open_csv_report_dialog",
     ):
+        st.session_state.pop("generated_csv", None)
         report_export_dialog("CSV")
 
 st.markdown(
