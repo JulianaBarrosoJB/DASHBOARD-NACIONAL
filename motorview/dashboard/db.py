@@ -304,6 +304,172 @@ def latest_gateway_status(site_id: str) -> dict:
 
 
 
+def df_faults_range(start: datetime, end: datetime, inverter_id: str | None = None) -> pd.DataFrame:
+    """Eventos de falha em um intervalo UTC exato, opcionalmente por motor."""
+    sql = """
+        SELECT f.id, f.site_id, f.inverter_id, f.ts, f.fault_code,
+               f.fault_description,
+               CASE WHEN f.event_type='fault_active' THEN 1 ELSE 0 END AS active,
+               f.event_type,
+               f.current_a AS "current_A",
+               f.dc_link_v AS "dc_link_V",
+               f.frequency_hz AS "frequency_Hz",
+               f.igbt_temp_c AS "igbt_temp_C",
+               f.status_word, i.name
+        FROM motorview.faults f
+        JOIN motorview.inverters i
+          ON i.site_id=f.site_id AND i.inverter_id=f.inverter_id
+        WHERE f.ts >= %s AND f.ts <= %s
+    """
+    params = [start, end]
+    if inverter_id:
+        sql += " AND f.inverter_id = %s"
+        params.append(inverter_id)
+    sql += " ORDER BY f.ts DESC"
+    return _clientize(_naive_utc(_query(sql, params), "ts"))
+
+
+def df_report_summary_range(
+    start: datetime,
+    end: datetime,
+    inverter_id: str | None = None,
+) -> pd.DataFrame:
+    """Resumo por motor dentro de um intervalo UTC exato."""
+    sql = """
+        SELECT
+            t.site_id,
+            t.inverter_id,
+            i.name,
+            AVG(t.current_a) AS "corrente_media_A",
+            MAX(t.current_a) AS "corrente_max_telemetry_A",
+            AVG(t.voltage_v) AS "tensao_media_V",
+            AVG(t.frequency_hz) AS "frequencia_media_Hz",
+            AVG(t.speed_rpm) AS "velocidade_media_rpm",
+            AVG(t.torque_pct) AS "torque_medio_pct",
+            AVG(t.dc_link_v) AS "link_cc_medio_V",
+            COUNT(*) AS leituras,
+            SUM(CASE WHEN t.comm_error THEN 1 ELSE 0 END) AS leituras_com_erro
+        FROM motorview.telemetry t
+        JOIN motorview.inverters i
+          ON i.site_id=t.site_id AND i.inverter_id=t.inverter_id
+        WHERE t.ts >= %s AND t.ts <= %s
+    """
+    params = [start, end]
+    if inverter_id:
+        sql += " AND t.inverter_id = %s"
+        params.append(inverter_id)
+    sql += " GROUP BY t.site_id, t.inverter_id, i.name ORDER BY i.name"
+    df = _query(sql, params)
+    if df.empty:
+        return df
+
+    fast_sql = """
+        SELECT
+            inverter_id,
+            AVG(current_avg_a) AS "corrente_fast_media_A",
+            MAX(current_max_a) AS "corrente_fast_max_A",
+            MIN(current_min_a) AS "corrente_fast_min_A"
+        FROM motorview.current_fast
+        WHERE ts >= %s AND ts <= %s
+    """
+    fast_params = [start, end]
+    if inverter_id:
+        fast_sql += " AND inverter_id = %s"
+        fast_params.append(inverter_id)
+    fast_sql += " GROUP BY inverter_id"
+    fast = _query(fast_sql, fast_params)
+    if not fast.empty:
+        df = df.merge(fast, on="inverter_id", how="left")
+
+    df = _clientize(df)
+    df["corrente_media_A"] = df.get(
+        "corrente_fast_media_A", df["corrente_media_A"]
+    ).fillna(df["corrente_media_A"])
+    df["corrente_max_A"] = df.get(
+        "corrente_fast_max_A", df["corrente_max_telemetry_A"]
+    ).fillna(df["corrente_max_telemetry_A"])
+    df["corrente_min_A"] = df.get(
+        "corrente_fast_min_A", pd.Series(index=df.index, dtype=float)
+    )
+    df["disponibilidade_pct"] = (
+        100 * (1 - df["leituras_com_erro"].fillna(0) / df["leituras"].clip(lower=1))
+    ).round(1)
+    return df
+
+
+def df_report_current_trend_range(
+    start: datetime,
+    end: datetime,
+    inverter_id: str | None = None,
+) -> pd.DataFrame:
+    """Série de corrente reduzida no PostgreSQL para um intervalo exato."""
+    seconds = max((end - start).total_seconds(), 1)
+    if seconds <= 86400:
+        bucket = "1 minute"
+    elif seconds <= 7 * 86400:
+        bucket = "5 minutes"
+    elif seconds <= 30 * 86400:
+        bucket = "30 minutes"
+    else:
+        bucket = "2 hours"
+
+    sql = f"""
+        SELECT
+            f.site_id,
+            f.inverter_id,
+            i.name,
+            date_bin(INTERVAL '{bucket}', f.ts,
+                     TIMESTAMPTZ '2000-01-01 00:00:00+00') AS ts,
+            AVG(f.current_avg_a) AS "current_avg_A",
+            MAX(f.current_max_a) AS "current_max_A"
+        FROM motorview.current_fast f
+        JOIN motorview.inverters i
+          ON i.site_id=f.site_id AND i.inverter_id=f.inverter_id
+        WHERE f.ts >= %s AND f.ts <= %s
+    """
+    params = [start, end]
+    if inverter_id:
+        sql += " AND f.inverter_id = %s"
+        params.append(inverter_id)
+    sql += " GROUP BY f.site_id, f.inverter_id, i.name, 4 ORDER BY 4, f.inverter_id"
+    return _clientize(_naive_utc(_query(sql, params), "ts"))
+
+
+def df_report_daily_range(
+    start: datetime,
+    end: datetime,
+    inverter_id: str | None = None,
+) -> pd.DataFrame:
+    """Resumo diário por motor dentro de um intervalo UTC exato."""
+    sql = """
+        SELECT
+            t.site_id,
+            t.inverter_id,
+            i.name,
+            (t.ts AT TIME ZONE 'America/Sao_Paulo')::date AS data,
+            AVG(t.current_a) AS "corrente_media_A",
+            MAX(t.current_a) AS "corrente_max_A",
+            AVG(t.voltage_v) AS "tensao_media_V",
+            AVG(t.frequency_hz) AS "frequencia_media_Hz",
+            AVG(t.speed_rpm) AS "velocidade_media_rpm",
+            SUM(CASE WHEN t.comm_error THEN 1 ELSE 0 END) AS erros_comunicacao,
+            COUNT(*) AS leituras
+        FROM motorview.telemetry t
+        JOIN motorview.inverters i
+          ON i.site_id=t.site_id AND i.inverter_id=t.inverter_id
+        WHERE t.ts >= %s AND t.ts <= %s
+    """
+    params = [start, end]
+    if inverter_id:
+        sql += " AND t.inverter_id = %s"
+        params.append(inverter_id)
+    sql += """
+        GROUP BY t.site_id, t.inverter_id, i.name, 4
+        ORDER BY 4 DESC, i.name
+    """
+    return _clientize(_query(sql, params))
+
+
 def df_report_summary(days: int = 7) -> pd.DataFrame:
     """Resumo por motor calculado no PostgreSQL, sem baixar milhões de leituras."""
     start = datetime.now(timezone.utc) - timedelta(days=days)
