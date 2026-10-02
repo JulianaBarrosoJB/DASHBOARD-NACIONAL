@@ -418,43 +418,66 @@ def report_export_dialog(export_format: str):
     inv_df = db.df_inverters()
     motor_options = ["__all__"] + (inv_df["id"].tolist() if not inv_df.empty else [])
 
-    with st.form(f"report_form_{export_format}"):
-        motor_id = st.selectbox(
-            "Motor",
-            options=motor_options,
-            format_func=lambda value: (
-                "Todos"
-                if value == "__all__"
-                else inv_df.set_index("id").loc[value, "name"]
-            ),
+    motor_id = st.selectbox(
+        "Motor",
+        options=motor_options,
+        format_func=lambda value: (
+            "Todos"
+            if value == "__all__"
+            else inv_df.set_index("id").loc[value, "name"]
+        ),
+        key=f"report_motor_{export_format}",
+    )
+    preset = st.selectbox(
+        "Período",
+        ["Hoje até agora", "Últimas 24 horas", "Últimos 7 dias", "Personalizado"],
+        key=f"report_period_{export_format}",
+    )
+
+    start_date = start_time = end_date = end_time = None
+    range_complete = True
+    if preset == "Personalizado":
+        now = datetime.now(LOCAL_TZ)
+        date_range = st.date_input(
+            "Intervalo de datas",
+            value=(now.date(), now.date()),
+            format="DD/MM/YYYY",
+            help="Selecione a data inicial e a data final no mesmo calendário.",
+            key=f"report_date_range_{export_format}",
         )
-        preset = st.selectbox(
-            "Período",
-            ["Hoje até agora", "Últimas 24 horas", "Últimos 7 dias", "Personalizado"],
+        if isinstance(date_range, (tuple, list)) and len(date_range) == 2:
+            start_date, end_date = date_range
+        else:
+            range_complete = False
+            st.caption("Selecione também a data final do intervalo.")
+
+        t1, t2 = st.columns(2)
+        start_time = t1.time_input(
+            "Hora inicial",
+            value=now.replace(hour=0, minute=0, second=0, microsecond=0).time(),
+            key=f"report_start_time_{export_format}",
+        )
+        end_time = t2.time_input(
+            "Hora final",
+            value=now.time().replace(microsecond=0),
+            key=f"report_end_time_{export_format}",
         )
 
-        start_date = start_time = end_date = end_time = None
-        if preset == "Personalizado":
-            now = datetime.now(LOCAL_TZ)
-            d1, d2 = st.columns(2)
-            start_date = d1.date_input("Data inicial", value=now.date())
-            end_date = d2.date_input("Data final", value=now.date())
-            t1, t2 = st.columns(2)
-            start_time = t1.time_input("Hora inicial", value=now.replace(hour=0, minute=0, second=0, microsecond=0).time())
-            end_time = t2.time_input("Hora final", value=now.time().replace(microsecond=0))
-
-        csv_type = None
-        if export_format == "CSV":
-            csv_type = st.selectbox(
-                "Conteúdo do CSV",
-                ["Detalhado", "Resumo", "Eventos de falha"],
-            )
-
-        submitted = st.form_submit_button(
-            f"Gerar {export_format}",
-            type="primary",
-            use_container_width=True,
+    csv_type = None
+    if export_format == "CSV":
+        csv_type = st.selectbox(
+            "Conteúdo do CSV",
+            ["Detalhado", "Resumo", "Eventos de falha"],
+            key="report_csv_type",
         )
+
+    submitted = st.button(
+        f"Gerar {export_format}",
+        type="primary",
+        use_container_width=True,
+        disabled=not range_complete,
+        key=f"generate_report_{export_format}",
+    )
 
     if submitted:
         start_local, end_local = _report_period(
